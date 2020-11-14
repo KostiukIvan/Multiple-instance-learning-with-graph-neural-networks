@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import SAGEConv
+from torch_geometric.nn import SAGEConv, ClusterGCNConv
 from torch_geometric.data import NeighborSampler
 import torch_geometric.nn as pyg_nn
+import torch_geometric.utils as pyg_ut
 
 class GraphBased(nn.Module):
     def __init__(self):
@@ -15,6 +16,7 @@ class GraphBased(nn.Module):
         self.n = 1.7 # 0 - no-edges; infinity - fully-conected graph
         self.n_step = 0.1 # inrement n if not enoght items
         self.num_adj_parm = 0.3 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag)
+        self.C = 50 # number of clusters
 
         self.feature_extractor_part1 = nn.Sequential(
             nn.Conv2d(1, 20, kernel_size=5),
@@ -30,12 +32,11 @@ class GraphBased(nn.Module):
             nn.ReLU(),
         )
 
-        self.gnn_embd = nn.ModuleList()
-        self.gnn_embd.append(SAGEConv(7,8))
-        # done 1. Transform NxL to graf (A,V) V = R^(NxD) A = [0, 1] ^ N
-        # 2. GNN embd = LeakyReLU, Batch normalization, GraphSage                           | In, out - the same
-        # 3. GNN pool = LeakyReLU, Batch normalization, GraphSage, MLP (with leaky ReLU)    | In, out - the same
-        # 4. MLP      = 2 layers of MLP with leaky ReLU activation function. The output dimension of 1 layer is the half of the input dimension
+        self.gnn_embd = SAGEConv(500, 500)
+        self.gnn_embd_bn = nn.BatchNorm1d(500)
+        
+        self.gnn_clust = ClusterGCNConv(500, self.C)
+        
 
 
         self.classifier = nn.Sequential(
@@ -50,19 +51,23 @@ class GraphBased(nn.Module):
         H = H.view(-1, 50 * 4 * 4) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
 
-        nodes, edge_index = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], edge_index [A,2]
+        nodes, edge_index = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], edge_index [2, A]
         edge_index = edge_index.cuda()
-        print('AAAAAAAAAAAAA: ', edge_index.is_cuda)
-        print('NNNNNNNNNN: ', nodes.is_cuda)
-        #GNN_embd = SAGEConv(3, 3)
-        self.convs = nn.ModuleList()
-        self.convs.append(pyg_nn.GCNConv(3, 3))
-        for i in range(0,1):
-            x = self.convs[i](nodes, edge_index)
+
+        # Embedding
+        Z = self.gnn_embd(nodes, edge_index)
+        Z = F.leaky_relu(Z, negative_slope=0.01)
+        Z = self.gnn_embd_bn(Z)
+
         
-        
-        #x = GNN_embd(nodes, adjs)
-        emb = x
+        #Clustering
+        S = self.gnn_clust(nodes, edge_index)
+
+        #GNN coarsened graph
+        coar_nodes = S.transpose(0,1) @ Z
+        A = pyg_ut.to_dense_adj(edge_index, max_num_nodes=nodes.shape[0]) # Generate adjacency matrix K x K !!!!! KOSS !!!!!!
+        coar_edges = S.transpose(0,1) @ A @ S 
+
 
 
         return x.log_softmax(dim=-1)
@@ -75,13 +80,19 @@ class GraphBased(nn.Module):
         for cur_i, cur_node in enumerate(bag):
             for alt_i, alt_node in enumerate(bag):
                 if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
-                    edge_index.append(torch.tensor([cur_i, alt_i]))
+                    edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"Warning: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
             return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
+    
+    def convert_edges_to_adv_matrix_(self, edges, matrix_size):
+        input = torch.empty(matrix_size, matrix_size)
+        adjc_matrix = torch.zeros_like(input)
+        for c, n in edges:
+            print("cos : ", c, n)
 
     def euclidean_distance_(self, X, Y):
         return torch.sqrt(torch.dot(X, X) - 2 * torch.dot(X, Y) + torch.dot(Y, Y))
