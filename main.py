@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from dataloader import MnistBags
-from model import Attention, GatedAttention
+from model import Attention, GatedAttention, GraphBased
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
@@ -33,7 +33,7 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
-parser.add_argument('--model', type=str, default='attention', help='Choose b/w attention and gated_attention')
+parser.add_argument('--model', type=str, default='graph_based', help='Choose b/w attention and gated_attention')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -71,6 +71,8 @@ if args.model=='attention':
     model = Attention()
 elif args.model=='gated_attention':
     model = GatedAttention()
+elif args.model=='graph_based':
+    model = GraphBased()
 if args.cuda:
     model.cuda()
 
