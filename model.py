@@ -36,20 +36,21 @@ class Attention(nn.Module):
         )
 
     def forward(self, x):
-        x = x.squeeze(0)
+        x = x.squeeze(0) # [9, 1, 28, 28]
+        
+        H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
+        H = H.view(-1, 50 * 4 * 4) # [9, 800]
+        H = self.feature_extractor_part2(H)  # NxL  [9, 500]
 
-        H = self.feature_extractor_part1(x)
-        H = H.view(-1, 50 * 4 * 4)
-        H = self.feature_extractor_part2(H)  # NxL
+        A = self.attention(H)  # NxK  [9, 1]
 
-        A = self.attention(H)  # NxK
-        A = torch.transpose(A, 1, 0)  # KxN
-        A = F.softmax(A, dim=1)  # softmax over N
+        A = torch.transpose(A, 1, 0)  # KxN  [1, 9]
+        A = F.softmax(A, dim=1)  # softmax over N  [1, 9]
 
-        M = torch.mm(A, H)  # KxL
+        M = torch.mm(A, H)  # KxL  [1, 500]
 
-        Y_prob = self.classifier(M)
-        Y_hat = torch.ge(Y_prob, 0.5).float()
+        Y_prob = self.classifier(M) # 0.xxxx
+        Y_hat = torch.ge(Y_prob, 0.5).float() # 0 or 1
 
         return Y_prob, Y_hat, A
 
@@ -57,7 +58,7 @@ class Attention(nn.Module):
     def calculate_classification_error(self, X, Y):
         Y = Y.float()
         _, Y_hat, _ = self.forward(X)
-        error = 1. - Y_hat.eq(Y).cpu().float().mean().data[0]
+        error = 1. - Y_hat.eq(Y).cpu().float().mean().data
 
         return error, Y_hat
 
@@ -77,7 +78,7 @@ class GatedAttention(nn.Module):
         self.K = 1
 
         self.feature_extractor_part1 = nn.Sequential(
-            nn.Conv2d(1, 20, kernel_size=5),
+            nn.Conv2d(1, 20, kernel_size=5),            # 
             nn.ReLU(),
             nn.MaxPool2d(2, stride=2),
             nn.Conv2d(20, 50, kernel_size=5),
