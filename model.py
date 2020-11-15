@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import SAGEConv, ClusterGCNConv
-from torch_geometric.data import NeighborSampler
+from torch_geometric.nn import SAGEConv, ClusterGCNConv, max_pool_neighbor_x
+from torch_geometric.data import NeighborSampler, Data
 import torch_geometric.nn as pyg_nn
 import torch_geometric.utils as pyg_ut
 
@@ -17,6 +17,7 @@ class GraphBased(nn.Module):
         self.n_step = 0.1 # inrement n if not enoght items
         self.num_adj_parm = 0.3 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag)
         self.C = 50 # number of clusters
+        self.classes = 2 # number of classes
 
         self.feature_extractor_part1 = nn.Sequential(
             nn.Conv2d(1, 20, kernel_size=5),
@@ -37,7 +38,9 @@ class GraphBased(nn.Module):
         
         self.gnn_clust = ClusterGCNConv(500, self.C)
         
-
+        self.lin1 = nn.Linear(500, 256, bias=True) 
+        self.lin2 = nn.Linear(256, 256, bias=True)
+        self.lin3 = nn.Linear(256, 2, bias=True)
 
         self.classifier = nn.Sequential(
             nn.Linear(self.L*self.K, 1),
@@ -58,17 +61,32 @@ class GraphBased(nn.Module):
         Z = self.gnn_embd(nodes, edge_index)
         Z = F.leaky_relu(Z, negative_slope=0.01)
         Z = self.gnn_embd_bn(Z)
-
         
-        #Clustering
+        # Clustering
         S = self.gnn_clust(nodes, edge_index)
-
-        #GNN coarsened graph
-        coar_nodes = S.transpose(0,1) @ Z
+        S = S.softmax(dim=1)
+        
+        # Coarsened graph
+        coar_nodes = S.transpose(0,1) @ Z # [50, 500]
         A = pyg_ut.to_dense_adj(edge_index, max_num_nodes=nodes.shape[0]) # Generate adjacency matrix K x K !!!!! KOSS !!!!!!
-        coar_edges = S.transpose(0,1) @ A @ S 
-
-
+        coar_edges = S.transpose(0,1) @ A @ S
+        coar_edges, coar_edges_val = pyg_ut.dense_to_sparse(coar_edges.squeeze()) # [2, 2500] could be modified, look to conversation on teams
+        
+        # Embedding 2
+        embd_nodes = self.gnn_embd(coar_nodes, coar_edges) 
+        embd_nodes = F.leaky_relu(embd_nodes, negative_slope=0.01)
+        embd_nodes = self.gnn_embd_bn(embd_nodes)# [50, 500]
+        
+        # Max pool
+        graph = Data(embd_nodes, coar_edges) # graph creation
+        graph = max_pool_neighbor_x(graph) # !!!!! KOSS !!!!!! ( tu jest graf fully-conected, co jest troche zle )
+        
+        # MLP
+        # x = F.relu(self.lin1(graph.x))
+        # x = F.relu(self.lin2(x))
+        # x = self.lin3(x)
+        
+                
 
         return x.log_softmax(dim=-1)
 
