@@ -15,7 +15,7 @@ class GraphBased(nn.Module):
         
         self.n = 2.5 # 0 - no-edges; infinity - fully-conected graph
         self.n_step = 0.5 # inrement n if not enoght items
-        self.num_adj_parm = 0.3 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag)
+        self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
         self.C = 5 # number of clusters
         self.classes = 2 # number of classes
 
@@ -39,7 +39,7 @@ class GraphBased(nn.Module):
         self.gnn_clust = ClusterGCNConv(500, self.C)
         
         self.lin1 = nn.Linear(500, 250, bias=True) 
-        self.lin2 = nn.Linear(250, self.classes, bias=True)
+        self.lin2 = nn.Linear(250, 1, bias=True)
 
         self.classifier = nn.Sequential(
             nn.Linear(self.L*self.K, 1),
@@ -48,23 +48,41 @@ class GraphBased(nn.Module):
 
     def forward(self, x):
         
+        turn_on_logs = False
         x = x.squeeze(0) # [9, 1, 28, 28]
         
         H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
         H = H.view(-1, 50 * 4 * 4) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
+        if turn_on_logs:
+            print("H = self.feature_extractor_part2(H): ", H.shape)
+            print(H)
+            print("============================================================================================")
 
         nodes, edge_index = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], edge_index [2, A]
         edge_index = edge_index.cuda()
+        if turn_on_logs:
+            print("Nodes", nodes.shape, " Edges", edge_index.shape)
+            print("Nodes : ", nodes)
+            print("Edges : ", edge_index)
+            print("------------------------------------------------------------------------------")
 
         # Embedding
         Z = self.gnn_embd(nodes, edge_index)
         Z = F.leaky_relu(Z, negative_slope=0.01)
         Z = self.gnn_embd_bn(Z)
+        if turn_on_logs:
+            print("Embeding : ", Z.shape)
+            print("Value : ", Z)
+            print("------------------------------------------------------------------------------")
         
         # Clustering
         S = self.gnn_clust(nodes, edge_index)
         S = S.softmax(dim=1)
+        if turn_on_logs:
+            print("Clustering : ", S.shape)
+            print("Value : ", S)
+            print("------------------------------------------------------------------------------")
         
         # Coarsened graph
         coar_nodes = S.transpose(0,1) @ Z # [C, 500]
@@ -74,24 +92,51 @@ class GraphBased(nn.Module):
         coar_edges = coar_edges.squeeze()
         coar_edges[torch.where(coar_edges < torch.mean(coar_edges))] = 0.0
         coar_edges, coar_edges_val = pyg_ut.dense_to_sparse(coar_edges.squeeze()) # [2, 2500] could be modified, look to conversation on teams
+        if turn_on_logs:
+            print("Coarsened graph : ", coar_nodes.shape)
+            print("Value : ", coar_nodes)
+            print("Edges : ", coar_edges.shape, coar_edges)
+            print("------------------------------------------------------------------------------")
         
         # Embedding 2
         embd_nodes = self.gnn_embd(coar_nodes, coar_edges) 
         embd_nodes = F.leaky_relu(embd_nodes, negative_slope=0.01)
         embd_nodes = self.gnn_embd_bn(embd_nodes)# [C, 500]
+        if turn_on_logs:
+            print("Embeding 2 : ", embd_nodes.shape, embd_nodes)
+            print("------------------------------------------------------------------------------")
         
         # Max pool
         graph = Data(embd_nodes, coar_edges) # graph creation
         graph = max_pool_neighbor_x(graph) # !!!!! KOSS !!!!!! 
+        if turn_on_logs:
+            print("Max pool : ", graph.x.shape, graph.x)
+            print("------------------------------------------------------------------------------")
         
         # MLP
         x = graph.x
         x = F.leaky_relu(self.lin1(x), 0.01)
         x = F.leaky_relu(self.lin2(x), 0.01)
+        if turn_on_logs:
+            print("MLP : ", x.shape, x)
+            print("------------------------------------------------------------------------------")
         
+        
+        Y_prob = torch.max(F.softmax(x.squeeze(), dim=0))
+        Y_hat = torch.ge(Y_prob, 0.5).float()
+        if turn_on_logs:
+            print("Y_prob : ", Y_prob)
+            print("Y_hat : ", Y_hat)
+            
+        '''
         Y_class_prob = torch.max(x, 0)
         Y_prob = torch.max(Y_class_prob.values)
         Y_hat = torch.argmax(Y_class_prob.values)
+        print("Y_class_prob : ", Y_class_prob)
+        print("Y_prob : ", Y_prob)
+        print("Y_hat : ", Y_hat)
+        '''
+        
 
         return Y_prob, Y_hat
     
@@ -108,12 +153,7 @@ class GraphBased(nn.Module):
             return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
-    
-    def convert_edges_to_adv_matrix_(self, edges, matrix_size):
-        input = torch.empty(matrix_size, matrix_size)
-        adjc_matrix = torch.zeros_like(input)
-        for c, n in edges:
-            print("cos : ", c, n)
+
 
     def euclidean_distance_(self, X, Y):
         return torch.sqrt(torch.dot(X, X) - 2 * torch.dot(X, Y) + torch.dot(Y, Y))

@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import numpy as np
+from matplotlib import pyplot as plt
 
 import argparse
 import torch
@@ -79,7 +80,33 @@ if args.cuda:
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.reg)
 
 
+
+def visualize(data): # [b,1,28,28]
+    np.random.seed(19680801)
+    grid = np.random.rand(4, 4)
+    iterations = 7
+    count = 0
+    fig, axs = plt.subplots(nrows=iterations, ncols=5, figsize=(iterations*2, 12),
+                            subplot_kw={'xticks': [], 'yticks': []})
+    
+    for b in range(0, data.shape[0]):
+            
+        axs.flat[count].imshow(data[b][0].reshape((28, 28)), cmap='gray')
+        count+=1
+        axs.flat[count].imshow(data[b][1].reshape((28, 28)), cmap='gray')
+        count+=1
+        axs.flat[count].imshow(data[b][2].reshape((28, 28)), cmap='gray')
+        count+=1
+        axs.flat[count].imshow(data[b][3].reshape((28, 28)), cmap='gray')
+        count+=1
+        axs.flat[count].imshow(data[b][4].reshape((28, 28)), cmap='gray')
+        count+=1
+
+    plt.tight_layout()
+    plt.show()
+    
 def train(epoch):
+
     model.train()
     train_loss = 0.
     train_error = 0.
@@ -88,7 +115,6 @@ def train(epoch):
         if args.cuda:
             data, bag_label = data.cuda(), bag_label.cuda()
         data, bag_label = Variable(data), Variable(bag_label)
-
         # reset gradients
         optimizer.zero_grad()
         # calculate loss and metrics
@@ -100,6 +126,8 @@ def train(epoch):
         loss.backward()
         # step
         optimizer.step()
+
+        
 
     # calculate loss and error for epoch
     train_loss /= len(train_loader)
@@ -137,7 +165,7 @@ def test():
     test_error /= len(test_loader)
     test_loss /= len(test_loader)
 
-    print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss.cpu().numpy()[0], test_error))
+    print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss.cpu().numpy(), test_error))
 
 
 if __name__ == "__main__":
