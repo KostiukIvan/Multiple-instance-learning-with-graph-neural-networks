@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import SAGEConv, ClusterGCNConv, max_pool_neighbor_x, max_pool, dense_diff_pool, DenseSAGEConv
+from torch_geometric.nn import SAGEConv, ClusterGCNConv, global_max_pool, max_pool, dense_diff_pool, DenseSAGEConv
 from torch_geometric.data import NeighborSampler, Data
 import torch_geometric.nn as pyg_nn
 import torch_geometric.utils as pyg_ut
@@ -12,9 +12,9 @@ from chamferdist import ChamferDistance
 class GraphBased(nn.Module):
     def __init__(self):
         super(GraphBased, self).__init__()
-        self.L = 500
+        self.L = 50
         self.C = 2 # number of clusters
-        self.classes = 1 # number of classes
+        self.classes = 2 # number of classes
 
         
         self.n = 3.5 # 0 - no-edges; infinity - fully-conected graph
@@ -57,50 +57,45 @@ class GraphBased(nn.Module):
         H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
         H = H.view(-1, 50 * 4 * 4) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
-        
+
 
         X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
-        E_idx = E_idx.cuda()
-        A = pyg_ut.to_dense_adj(E_idx, max_num_nodes=X.shape[0])
+        A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=X.shape[0])
 
         # Embedding
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
-        print("Z ", Z.shape)
         Z = self.bn1(Z.squeeze())
         
         # Clustering
         S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
-        print("S ", S.shape)
         S = self.bn2(S.view(-1, self.C))
         S = torch.softmax(S, dim=1)
         #S = F.leaky_relu(self.mlp(S))
 
         # Coarsened graph   
-        adj_matrix = pyg_ut.to_dense_adj(E_idx, max_num_nodes=X.shape[0]) # Generate adjacency matrix K x K !!!!! KOSS !!!!!!
-        X, adj_matrix, l1, e1 = dense_diff_pool(Z, adj_matrix, S)
+        X, adj_matrix, l1, e1 = dense_diff_pool(Z, A, S)
 
         # Embedding 2
         X = F.leaky_relu(self.gnn_embd(X, adj_matrix), negative_slope=0.01) # [C, 500]
-        print("X " , X.view(self.C, self.L).shape)
         X = self.bn1(X.view(self.C, self.L))
         
         # Concat
         X = X.view(1, -1)
-        
+
         # MLP
         X = F.leaky_relu(self.lin1(X), 0.01)
         X = F.leaky_relu(self.lin2(X), 0.01)
         
         
-        Y_prob = X.squeeze() # torch.max(F.softmax(X.squeeze(), dim=0))
-        Y_hat = torch.ge(Y_prob, 0.5).float()
+        Y_prob = torch.max(F.softmax(X.squeeze(), dim=0))
+        #Y_hat = torch.ge(Y_prob, 0.5).float()
         Y_hat = torch.argmax(F.softmax(X.squeeze(), dim=0))
-        if True:
+        if False:
             print("Y_prob : ", Y_prob)
             print("Y_hat : ", Y_hat)
         
 
-        return Y_prob, Y_hat
+        return Y_prob, Y_hat, l1
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -108,8 +103,8 @@ class GraphBased(nn.Module):
         chamferDist = ChamferDistance()
         for cur_i, cur_node in enumerate(bag):
             for alt_i, alt_node in enumerate(bag):
-                # if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
-                if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
+                if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
+                #if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
                     edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
@@ -125,18 +120,18 @@ class GraphBased(nn.Module):
     # AUXILIARY METHODS
     def calculate_classification_error(self, X, Y):
         Y = Y.float()
-        _, Y_hat = self.forward(X)
+        _, Y_hat, _ = self.forward(X)
         error = 1. - Y_hat.eq(Y).cpu().float().mean().data
 
         return error, Y_hat
 
     def calculate_objective(self, X, Y):
         Y = Y.float()
-        Y_prob, _ = self.forward(X)
+        Y_prob, _, l1 = self.forward(X)
         Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
         neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1. - Y) * torch.log(1. - Y_prob))  # negative log bernoulli
 
-        return neg_log_likelihood
+        return neg_log_likelihood + l1
 
 
 
