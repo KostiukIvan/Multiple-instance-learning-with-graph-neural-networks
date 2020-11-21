@@ -105,35 +105,35 @@ def visualize(data): # [b,1,28,28]
     plt.tight_layout()
     plt.show()
     
-def train(epoch):
-
-    model.train()
-    train_loss = 0.
-    train_error = 0.
-    for batch_idx, (data, label) in enumerate(train_loader):
-        bag_label = label[0]
-        if args.cuda:
-            data, bag_label = data.cuda(), bag_label.cuda()
-        data, bag_label = Variable(data), Variable(bag_label)
-        # reset gradients
-        optimizer.zero_grad()
-        # calculate loss and metrics
-        loss = model.calculate_objective(data, bag_label)
-        train_loss += loss.data[0]
-        error, _ = model.calculate_classification_error(data, bag_label)
-        train_error += error
-        # backward pass
-        loss.backward()
-        # step
-        optimizer.step()
-
-        
-
-    # calculate loss and error for epoch
-    train_loss /= len(train_loader)
-    train_error /= len(train_loader)
+def train(epochs):
+    for epoch in range(1, epochs + 1):
+        model.train()
+        train_loss = 0.
+        train_error = 0.
+        for batch_idx, (data, label) in enumerate(train_loader):
+            bag_label = label[0]
+            if args.cuda:
+                data, bag_label = data.cuda(), bag_label.cuda()
+            data, bag_label = Variable(data), Variable(bag_label)
+            # reset gradients
+            optimizer.zero_grad()
+            # calculate loss and metrics
+            loss = model.calculate_objective(data, bag_label)
+            train_loss += loss.data[0]
+            error, _ = model.calculate_classification_error(data, bag_label)
+            train_error += error
+            # backward pass
+            loss.backward()
+            # step
+            optimizer.step()
     
-    print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error))
+            
+    
+        # calculate loss and error for epoch
+        train_loss /= len(train_loader)
+        train_error /= len(train_loader)
+        
+        print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error))
 
 
 def test():
@@ -170,7 +170,6 @@ def test():
 
 if __name__ == "__main__":
     print('Start Training')
-    for epoch in range(1, args.epochs + 1):
-        train(epoch)
+    train(args.epochs)
     print('Start Testing')
     test()
