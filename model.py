@@ -42,6 +42,9 @@ class GraphBased(nn.Module):
         self.bn2 = torch.nn.BatchNorm1d(self.C)
         # self.mlp = nn.Linear(self.C, self.C, bias=True) 
         
+        self.gnn_embd2 = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
+        self.bn3 = nn.BatchNorm1d(self.L)
+        
         input_layers = int(self.L * self.C)
         hidden_layers = int(self.L * self.C / 2)
         output_layer = self.classes

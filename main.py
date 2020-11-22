@@ -14,8 +14,8 @@ from model import Attention, GatedAttention, GraphBased
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
-parser.add_argument('--epochs', type=int, default=20, metavar='N',
-                    help='number of epochs to train (default: 20)')
+#parser.add_argument('--epochs', type=int, default=20, metavar='N',
+#                    help='number of epochs to train (default: 20)')
 parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
                     help='learning rate (default: 0.0005)')
 parser.add_argument('--reg', type=float, default=10e-5, metavar='R',
@@ -36,107 +36,94 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--model', type=str, default='graph_based', help='Choose b/w attention and gated_attention or graph_based')
 
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-
-torch.manual_seed(args.seed)
-if args.cuda:
-    torch.cuda.manual_seed(args.seed)
-    print('\nGPU is ON!')
-
-print('Load Train and Test Set')
-loader_kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
-
-train_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
-                                               mean_bag_length=args.mean_bag_length,
-                                               var_bag_length=args.var_bag_length,
-                                               num_bag=args.num_bags_train,
-                                               seed=args.seed,
-                                               train=True),
-                                     batch_size=1,
-                                     shuffle=True,
-                                     **loader_kwargs)
-
-test_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
-                                              mean_bag_length=args.mean_bag_length,
-                                              var_bag_length=args.var_bag_length,
-                                              num_bag=args.num_bags_test,
-                                              seed=args.seed,
-                                              train=False),
-                                    batch_size=1,
-                                    shuffle=False,
-                                    **loader_kwargs)
-
-print('Init Model')
-if args.model=='attention':
-    model = Attention()
-elif args.model=='gated_attention':
-    model = GatedAttention()
-elif args.model=='graph_based':
-    model = GraphBased()
-if args.cuda:
-    model.cuda()
-
-optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.reg)
 
 
 
-def visualize(data): # [b,1,28,28]
-    np.random.seed(19680801)
-    grid = np.random.rand(4, 4)
-    iterations = 7
-    count = 0
-    fig, axs = plt.subplots(nrows=iterations, ncols=5, figsize=(iterations*2, 12),
-                            subplot_kw={'xticks': [], 'yticks': []})
+def load_train_test(args):
+    print('Load Train and Test Set')
+    loader_kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
     
-    for b in range(0, data.shape[0]):
-            
-        axs.flat[count].imshow(data[b][0].reshape((28, 28)), cmap='gray')
-        count+=1
-        axs.flat[count].imshow(data[b][1].reshape((28, 28)), cmap='gray')
-        count+=1
-        axs.flat[count].imshow(data[b][2].reshape((28, 28)), cmap='gray')
-        count+=1
-        axs.flat[count].imshow(data[b][3].reshape((28, 28)), cmap='gray')
-        count+=1
-        axs.flat[count].imshow(data[b][4].reshape((28, 28)), cmap='gray')
-        count+=1
+    train_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
+                                                   mean_bag_length=args.mean_bag_length,
+                                                   var_bag_length=args.var_bag_length,
+                                                   num_bag=args.num_bags_train,
+                                                   seed=args.seed,
+                                                   train=True),
+                                         batch_size=1,
+                                         shuffle=True,
+                                         **loader_kwargs)
+    
+    test_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
+                                                  mean_bag_length=args.mean_bag_length,
+                                                  var_bag_length=args.var_bag_length,
+                                                  num_bag=args.num_bags_test,
+                                                  seed=args.seed,
+                                                  train=False),
+                                        batch_size=1,
+                                        shuffle=False,
+                                        **loader_kwargs)
+    return train_loader, test_loader
+    
+def load_model(args):
+    print('Init Model')
+    if args.model=='attention':
+        model = Attention()
+    elif args.model=='gated_attention':
+        model = GatedAttention()
+    elif args.model=='graph_based':
+        model = GraphBased()
+    if args.cuda:
+        model.cuda()
+    
+    return model
 
-    plt.tight_layout()
-    plt.show()
+
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    args.cuda = not args.no_cuda and torch.cuda.is_available()
     
-def train(epochs):
-    for epoch in range(1, epochs + 1):
-        model.train()
-        train_loss = 0.
-        train_error = 0.
-        for batch_idx, (data, label) in enumerate(train_loader):
-            bag_label = label[0]
-            if args.cuda:
-                data, bag_label = data.cuda(), bag_label.cuda()
-            data, bag_label = Variable(data), Variable(bag_label)
-            # reset gradients
-            optimizer.zero_grad()
-            # calculate loss and metrics
-            loss = model.calculate_objective(data, bag_label)
-            train_loss += loss.data[0]
-            error, _ = model.calculate_classification_error(data, bag_label)
-            train_error += error
-            # backward pass
-            loss.backward()
-            # step
-            optimizer.step()
-    
-            
-    
-        # calculate loss and error for epoch
-        train_loss /= len(train_loader)
-        train_error /= len(train_loader)
+    torch.manual_seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
+        print('\nGPU is ON!')
         
-        print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error))
+    train_loader, test_loader = load_train_test(args)
+        
+    model = load_model(args)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.reg)
 
+    epochs = 10
+    print('Start Training')
+    for epoch in range(1, epochs + 1):
+       model.train()
+       train_loss = 0.
+       train_error = 0.
+       for batch_idx, (data, label) in enumerate(train_loader):
+           bag_label = label[0]
+           if args.cuda:
+               data, bag_label = data.cuda(), bag_label.cuda()
+           data, bag_label = Variable(data), Variable(bag_label)
+           # reset gradients
+           optimizer.zero_grad()
+           # calculate loss and metrics
+           loss = model.calculate_objective(data, bag_label)
+           train_loss += loss.data[0]
+           error, _ = model.calculate_classification_error(data, bag_label)
+           train_error += error
+           # backward pass
+           loss.backward()
+           # step
+           optimizer.step()
 
-def test():
+   
+       # calculate loss and error for epoch
+       train_loss /= len(train_loader)
+       train_error /= len(train_loader)
+       
+       print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error))
+       
+    print('Start Testing')
     model.eval()
     test_loss = 0.
     test_error = 0.
@@ -167,9 +154,3 @@ def test():
 
     print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss.cpu().numpy(), test_error))
 
-
-if __name__ == "__main__":
-    print('Start Training')
-    train(args.epochs)
-    print('Start Testing')
-    test()
