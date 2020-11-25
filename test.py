@@ -111,10 +111,10 @@ class GNN(torch.nn.Module):
     def forward(self, x, adj):
         # batch_size, num_nodes, in_channels = x.size()
 
-        x = self.bn(1, F.relu(self.conv1(x, adj)))
+        x = self.bn(1, F.leaky_relu(self.conv1(x, adj), negative_slope=0.01))
 
         if self.lin is not None:
-            x = F.relu(self.lin(x))
+            x = F.leaky_relu(self.lin(x), negative_slope=0.01)
 
         return x
 
@@ -126,8 +126,8 @@ class Net(torch.nn.Module):
         self.C = 2
         self.classes = 2 # number of classes
         
-        self.n = 5000000 # 0 - no-edges; infinity - fully-conected graph
-        self.n_step = 0.5 # inrement n if not enoght items
+        self.n = 0.5 # 0 - no-edges; infinity - fully-conected graph
+        self.n_step = 0.01 # inrement n if not enoght items
         self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
         
         self.feature_extractor_part1 = nn.Sequential(
@@ -144,14 +144,16 @@ class Net(torch.nn.Module):
             nn.ReLU(),
         )
 
-        self.gnn1_pool = GNN(self.L, self.C, add_loop=True)
-        self.gnn1_embed = GNN(self.L, self.L, add_loop=True, lin=False)
+        self.gnn1_pool = GNN(self.L, self.C)
+        self.gnn1_embed = GNN(self.L, self.L, lin=False)
 
 
         self.gnn3_embed = GNN(self.L, self.L, lin=False)
 
-        self.lin1 = torch.nn.Linear(self.L, 16)
-        self.lin2 = torch.nn.Linear(16, self.classes)
+        input_layers = int(self.L)
+        hidden_layers = int(self.L / 2)
+        self.lin1 = torch.nn.Linear(input_layers, hidden_layers)
+        self.lin2 = torch.nn.Linear(hidden_layers, self.classes)
         
         # Load the pretrained model
         self.feature_model = models.resnet18(pretrained=True).cuda()
@@ -188,14 +190,15 @@ class Net(torch.nn.Module):
         cos = nn.CosineSimilarity(dim=1, eps=1e-6)
         for cur_i, cur_node in enumerate(bag):
             for alt_i, alt_node in enumerate(bag):
-                if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
-                # if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) < N:
+                # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
+                # if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
+                if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
                 # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
                     edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
-            return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
+            return self.convert_bag_to_graph_(bag, N = (N - self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
 
@@ -207,14 +210,15 @@ class Net(torch.nn.Module):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = Net().to(device)
-#optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 
 def train(epoch):
     model.train()
     loss_all = 0
-   
+    correct = 0
+    
     for batch_idx, (data, label) in enumerate(train_loader):
         data = data.to(device)
         bag_label = label[0]
@@ -225,6 +229,7 @@ def train(epoch):
             
         optimizer.zero_grad()
         output, l, _ = model(data)
+        #pred = model(data)[0].max(dim=1)[1]
         
         if bag_label:
             target = torch.tensor([1.], dtype=torch.long).cuda()
@@ -234,8 +239,11 @@ def train(epoch):
         loss = F.nll_loss(output, target) + l
         loss.backward()
         loss_all += target.size(0) * loss.item()
+        
         optimizer.step()
-    return loss_all / len(train_loader)
+        
+        #correct += pred.eq(target.view(-1)).sum().item()
+    return loss_all / len(train_loader), 0
 
 
 @torch.no_grad()
@@ -265,11 +273,11 @@ train_loader, test_loader, val_loader = load_train_test()
 
 best_val_acc = test_acc = 0
 for epoch in range(1, 300):
-    train_loss = train(epoch)
+    train_loss, train_acc = train(epoch)
     val_acc = test(val_loader)
     if val_acc > best_val_acc:
         test_acc = test(test_loader)
         best_val_acc = val_acc
-    print('Epoch: {:03d}, Train Loss: {:.7f}, '
-          'Val Acc: {:.7f}, Test Acc: {:.7f}'.format(epoch, train_loss,
+    print('Epoch: {:03d}, Train Loss: {:.7f}, Train acc: {:.7f}, '
+          'Val Acc: {:.7f}, Test Acc: {:.7f}'.format(epoch, train_loss, train_acc,
                                                      val_acc, test_acc))

@@ -41,7 +41,6 @@ parser.add_argument('--model', type=str, default='graph_based', help='Choose b/w
 
 def load_train_test(args):
     print('Load Train and Test Set')
-    loader_kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
     
     train_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
                                                    mean_bag_length=args.mean_bag_length,
@@ -50,8 +49,7 @@ def load_train_test(args):
                                                    seed=args.seed,
                                                    train=True),
                                          batch_size=1,
-                                         shuffle=True,
-                                         **loader_kwargs)
+                                         shuffle=True)
     
     test_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
                                                   mean_bag_length=args.mean_bag_length,
@@ -60,8 +58,7 @@ def load_train_test(args):
                                                   seed=args.seed,
                                                   train=False),
                                         batch_size=1,
-                                        shuffle=False,
-                                        **loader_kwargs)
+                                        shuffle=False)
     return train_loader, test_loader
     
 def load_model(args):

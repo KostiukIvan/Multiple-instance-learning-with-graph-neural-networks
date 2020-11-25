@@ -54,12 +54,12 @@ class GraphBased(nn.Module):
 
     def forward(self, x):
         
-        turn_on_logs = False
-        x = x.squeeze(0) # [9, 1, 28, 28]
         
+        x = x.squeeze(0) # [9, 1, 28, 28]
         H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
         H = H.view(-1, 50 * 4 * 4) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
+        # H = x.view(-1, 28 * 28)
 
 
         X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
