@@ -36,14 +36,14 @@ def load_train_test_val(ds):
     test = []
     val = []
     
-    step = N * 2 // 3
-    for i in range(0, 3):
+    step = N * 2 // 3   
+    for i in range(0, 15):
         train.append((ds[i][0], ds[i][1][0]))
 
-    for i in range(10, 11):
+    for i in range(15, 17):
         val.append((ds[i][0], ds[i][1][0]))
     
-    for i in range(20, 21):
+    for i in range(20, 25):
         test.append((ds[i][0], ds[i][1][0]))
     
     return train, test, val
