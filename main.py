@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from dataloader import MnistBags
-from model import Attention, GatedAttention, GraphBased
+from model import GraphBased
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
@@ -26,7 +26,7 @@ parser.add_argument('--mean_bag_length', type=int, default=10, metavar='ML',
                     help='average bag length')
 parser.add_argument('--var_bag_length', type=int, default=2, metavar='VL',
                     help='variance of bag length')
-parser.add_argument('--num_bags_train', type=int, default=200, metavar='NTrain',
+parser.add_argument('--num_bags_train', type=int, default=500, metavar='NTrain',
                     help='number of bags in training set')
 parser.add_argument('--num_bags_test', type=int, default=50, metavar='NTest',
                     help='number of bags in test set')
@@ -62,18 +62,58 @@ def load_train_test(args):
     return train_loader, test_loader
     
 def load_model(args):
-    print('Init Model')
-    if args.model=='attention':
-        model = Attention()
-    elif args.model=='gated_attention':
-        model = GatedAttention()
-    elif args.model=='graph_based':
+
+    if args.model=='graph_based':
         model = GraphBased()
     if args.cuda:
         model.cuda()
     
     return model
 
+
+def train(model, optimizer, train_loader):
+
+    model.train()
+    train_loss = 0.
+    train_error = 0.
+    for batch_idx, (data, label) in enumerate(train_loader):
+        bag_label = label[0]
+        if args.cuda:
+            data, bag_label = data.cuda(), bag_label.cuda()
+        #data, bag_label = Variable(data), Variable(bag_label)
+        # reset gradients
+        optimizer.zero_grad()
+        # calculate loss and metrics
+        loss = model.calculate_objective(data, bag_label)
+        train_loss += loss.data[0]
+        error, _ = model.calculate_classification_error(data, bag_label)
+        train_error += error
+        # backward pass
+        loss.backward()
+        # step
+        optimizer.step()
+
+    # calculate loss and error for epoch
+    train_loss /= len(train_loader)
+    train_error /= len(train_loader)
+    return train_loss, train_error
+    
+def test(model, test_loader):
+    model.eval()
+    test_loss = 0.
+    test_error = 0.
+    for batch_idx, (data, label) in enumerate(test_loader):
+        bag_label = label[0]
+        instance_labels = label[1]
+        if args.cuda:
+            data, bag_label = data.cuda(), bag_label.cuda()
+
+        error, predicted_label = model.calculate_classification_error(data, bag_label)
+        test_error += error
+
+    test_error /= len(test_loader)
+
+    return train_loss, train_error
 
 
 if __name__ == "__main__":
@@ -88,66 +128,11 @@ if __name__ == "__main__":
     train_loader, test_loader = load_train_test(args)
         
     model = load_model(args)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.reg)
-
-    epochs = 10
-    print('Start Training')
-    for epoch in range(1, epochs + 1):
-       model.train()
-       train_loss = 0.
-       train_error = 0.
-       for batch_idx, (data, label) in enumerate(train_loader):
-           bag_label = label[0]
-           if args.cuda:
-               data, bag_label = data.cuda(), bag_label.cuda()
-           data, bag_label = Variable(data), Variable(bag_label)
-           # reset gradients
-           optimizer.zero_grad()
-           # calculate loss and metrics
-           loss = model.calculate_objective(data, bag_label)
-           train_loss += loss.data[0]
-           error, _ = model.calculate_classification_error(data, bag_label)
-           train_error += error
-           # backward pass
-           loss.backward()
-           # step
-           optimizer.step()
-
-   
-       # calculate loss and error for epoch
-       train_loss /= len(train_loader)
-       train_error /= len(train_loader)
-       
-       print('Epoch: {}, Loss: {:.4f}, Train error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error))
-       
-    print('Start Testing')
-    model.eval()
-    test_loss = 0.
-    test_error = 0.
-    for batch_idx, (data, label) in enumerate(test_loader):
-        bag_label = label[0]
-        instance_labels = label[1]
-        if args.cuda:
-            data, bag_label = data.cuda(), bag_label.cuda()
-        data, bag_label = Variable(data), Variable(bag_label)
-        # loss, attention_weights = model.calculate_objective(data, bag_label)
-        loss = model.calculate_objective(data, bag_label)
-        test_loss += loss.data[0]
-        error, predicted_label = model.calculate_classification_error(data, bag_label)
-        test_error += error
-
-        '''
-        if batch_idx < 5:  # plot bag labels and instance labels for first 5 bags
-            bag_level = (bag_label.cpu().data.numpy()[0], int(predicted_label.cpu().data.numpy()[0][0]))
-            instance_level = list(zip(instance_labels.numpy()[0].tolist(),
-                                 np.round(attention_weights.cpu().data.numpy()[0], decimals=3).tolist()))
-
-            print('\nTrue Bag Label, Predicted Bag Label: {}\n'
-                  'True Instance Labels, Attention Weights: {}'.format(bag_level, instance_level))
-        '''
-
-    test_error /= len(test_loader)
-    test_loss /= len(test_loader)
-
-    print('\nTest Set, Loss: {:.4f}, Test error: {:.4f}'.format(test_loss.cpu().numpy(), test_error))
+    optimizer = optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.999), weight_decay=1e-3)
+    
+    for epoch in range(0, 100):
+        train_loss, train_error = train(model, optimizer, train_loader)
+        test_loss, test_error = test(model, test_loader)
+    
+        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error, test_error))
 
