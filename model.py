@@ -37,11 +37,11 @@ class GraphBased(nn.Module):
 
         self.gnn_embd = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
         self.bn1 = nn.BatchNorm1d(self.L)
-        self.pool1 = nn.MaxPool1d(3, stride=2)
+        #self.pool1 = nn.MaxPool1d()(3, stride=2)
                     
         self.gnn_pool = DenseSAGEConv(self.L, self.C)
         self.bn2 = torch.nn.BatchNorm1d(self.C)
-        # self.mlp = nn.Linear(self.C, self.C, bias=True) 
+        self.mlp = nn.Linear(self.C, self.C, bias=True) 
         
         self.gnn_embd2 = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
         self.bn3 = nn.BatchNorm1d(self.L)
@@ -54,13 +54,10 @@ class GraphBased(nn.Module):
 
 
     def forward(self, x):
-        
-        
         x = x.squeeze(0) # [9, 1, 28, 28]
         H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
         H = H.view(-1, 50 * 4 * 4) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
-        # H = x.view(-1, 28 * 28)
 
 
         X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
@@ -68,25 +65,17 @@ class GraphBased(nn.Module):
 
         # Embedding
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
-        # Z = self.bn1(Z.squeeze())
-        # print(Z.shape, Z)
-        # output = self.pool1(Z)
-        # print(output.shape, output)
-        
-        
-        
+
         # Clustering
         S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
-        # S = self.bn2(S.view(-1, self.C))
-        S = torch.softmax(S, dim=1)
-        #S = F.leaky_relu(self.mlp(S))
+        S = F.leaky_relu(self.mlp(S), negative_slope=0.01)
 
         # Coarsened graph   
         X, adj_matrix, l1, e1 = dense_diff_pool(Z, A, S)
 
         # Embedding 2
         X = F.leaky_relu(self.gnn_embd(X, adj_matrix), negative_slope=0.01) # [C, 500]
-        # X = self.bn3(X.view(self.C, self.L))
+        # loss_emb_2 = self.pool1(X)
         
         # Concat
         X = X.view(1, -1)
@@ -95,16 +84,16 @@ class GraphBased(nn.Module):
         X = F.leaky_relu(self.lin1(X), 0.01)
         X = F.leaky_relu(self.lin2(X), 0.01)
         
-        
+       
         Y_prob = torch.max(F.softmax(X.squeeze(), dim=0))
-        #Y_hat = torch.ge(Y_prob, 0.5).float()
+        #Y_hat = torch.ge(F.softmax(X.squeeze(), dim=0), 0.5).float()
         Y_hat = torch.argmax(F.softmax(X.squeeze(), dim=0))
         if False:
             print("Y_prob : ", Y_prob)
             print("Y_hat : ", Y_hat)
         
 
-        return Y_prob, Y_hat, l1
+        return Y_prob, Y_hat, l1 
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -140,7 +129,7 @@ class GraphBased(nn.Module):
         Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
         neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1. - Y) * torch.log(1. - Y_prob))  # negative log bernoulli
 
-        return neg_log_likelihood + l1
+        return neg_log_likelihood 
 
 
 

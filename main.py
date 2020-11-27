@@ -26,7 +26,7 @@ parser.add_argument('--mean_bag_length', type=int, default=10, metavar='ML',
                     help='average bag length')
 parser.add_argument('--var_bag_length', type=int, default=2, metavar='VL',
                     help='variance of bag length')
-parser.add_argument('--num_bags_train', type=int, default=500, metavar='NTrain',
+parser.add_argument('--num_bags_train', type=int, default=200, metavar='NTrain',
                     help='number of bags in training set')
 parser.add_argument('--num_bags_test', type=int, default=50, metavar='NTest',
                     help='number of bags in test set')
@@ -80,7 +80,7 @@ def train(model, optimizer, train_loader):
         bag_label = label[0]
         if args.cuda:
             data, bag_label = data.cuda(), bag_label.cuda()
-        #data, bag_label = Variable(data), Variable(bag_label)
+
         # reset gradients
         optimizer.zero_grad()
         # calculate loss and metrics
