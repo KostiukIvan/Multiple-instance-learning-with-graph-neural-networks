@@ -17,7 +17,7 @@ class GraphBased(nn.Module):
         self.classes = 2 # number of classes
 
         
-        self.n = 3.5 # 0 - no-edges; infinity - fully-conected graph
+        self.n = 50 # 0 - no-edges; infinity - fully-conected graph
         self.n_step = 0.5 # inrement n if not enoght items
         self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
 
@@ -66,7 +66,6 @@ class GraphBased(nn.Module):
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
         loss_emb_1 = self.auxiliary_loss(A, Z)
         
-        
         # Clustering
         S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
         S = F.leaky_relu(self.mlp(S), negative_slope=0.01)
@@ -86,15 +85,15 @@ class GraphBased(nn.Module):
         X = F.leaky_relu(self.lin2(X), 0.01)
         
        
-        Y_prob = torch.max(F.softmax(X.squeeze(), dim=0))
+        Y_prob = F.softmax(X.squeeze(), dim=0)
         #Y_hat = torch.ge(F.softmax(X.squeeze(), dim=0), 0.5).float()
-        Y_hat = torch.argmax(F.softmax(X.squeeze(), dim=0))
+        #Y_hat = torch.argmax(F.softmax(X.squeeze(), dim=0))
         if False:
             print("Y_prob : ", Y_prob)
-            print("Y_hat : ", Y_hat)
+
         
 
-        return Y_prob, Y_hat, l1 + loss_emb_1 + loss_emb_2
+        return Y_prob, (l1 + loss_emb_1 + loss_emb_2)
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -107,7 +106,7 @@ class GraphBased(nn.Module):
                     edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
-            #print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
+            print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
             return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
@@ -123,6 +122,8 @@ class GraphBased(nn.Module):
         '''
         A = A.unsqueeze(0) if A.dim() == 2 else A
         S = S.unsqueeze(0) if S.dim() == 2 else S
+        
+        S = torch.softmax(S, dim=-1)
     
         link_loss = A - torch.matmul(S, S.transpose(1, 2))
         link_loss = torch.norm(link_loss, p=2)
@@ -133,19 +134,39 @@ class GraphBased(nn.Module):
     # AUXILIARY METHODS
     def calculate_classification_error(self, X, Y):
         Y = Y.float()
-        _, Y_hat, _ = self.forward(X)
+        Y_prob, _ = self.forward(X)
+        Y_hat = torch.argmax(Y_prob)
         error = 1. - Y_hat.eq(Y).cpu().float().mean().data
 
         return error, Y_hat
 
-    def calculate_objective(self, X, Y):
-        Y = Y.float()
-        Y_prob, _, l1 = self.forward(X)
+    def cross_entropy_loss(self, X, target):
+        Y_prob, l2 = self.forward(X)
+        
+        Y_prob = Y_prob.unsqueeze(0) if Y_prob.dim() == 1 else Y_prob
+        target = torch.tensor(target, dtype=torch.long)
+
+        loss = nn.CrossEntropyLoss()
+        l1 = loss(Y_prob, target) 
+    
+        return l1 + l2
+
+    def negative_log_likelihood_loss(self, X, target):
+        Y_prob, l2 = self.forward(X)
+        
+        Y_prob = Y_prob.unsqueeze(0) if Y_prob.dim() == 1 else Y_prob
+        target = torch.tensor(target, dtype=torch.long)
+        
+        loss = nn.NLLLoss()
+        l1 = -1 * loss(Y_prob, target) 
+    
+        return l1 + l2
+    
+    def calculate_objective(self, X, target):
+        target = target.float()
+        Y_prob, l1 = self.forward(X)
         Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
-        neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1. - Y) * torch.log(1. - Y_prob))  # negative log bernoulli
+        neg_log_likelihood = -1. * (target * torch.log(Y_prob) + (1. - target) * torch.log(1. - Y_prob))  # negative log bernoulli
 
-        return neg_log_likelihood 
-
-
-
+        return neg_log_likelihood.data[0]
 

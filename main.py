@@ -26,9 +26,9 @@ parser.add_argument('--mean_bag_length', type=int, default=10, metavar='ML',
                     help='average bag length')
 parser.add_argument('--var_bag_length', type=int, default=2, metavar='VL',
                     help='variance of bag length')
-parser.add_argument('--num_bags_train', type=int, default=200, metavar='NTrain',
+parser.add_argument('--num_bags_train', type=int, default=100, metavar='NTrain',
                     help='number of bags in training set')
-parser.add_argument('--num_bags_test', type=int, default=50, metavar='NTest',
+parser.add_argument('--num_bags_test', type=int, default=30, metavar='NTest',
                     help='number of bags in test set')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
@@ -84,8 +84,8 @@ def train(model, optimizer, train_loader):
         # reset gradients
         optimizer.zero_grad()
         # calculate loss and metrics
-        loss = model.calculate_objective(data, bag_label)
-        train_loss += loss.data[0]
+        loss = model.cross_entropy_loss(data, bag_label)
+        train_loss += loss
         error, _ = model.calculate_classification_error(data, bag_label)
         train_error += error
         # backward pass
@@ -134,5 +134,5 @@ if __name__ == "__main__":
         train_loss, train_error = train(model, optimizer, train_loader)
         test_loss, test_error = test(model, test_loader)
     
-        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss.cpu().numpy(), train_error, test_error))
+        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss.cpu().detach().numpy(), train_error, test_error))
 
