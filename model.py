@@ -37,7 +37,6 @@ class GraphBased(nn.Module):
 
         self.gnn_embd = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
         self.bn1 = nn.BatchNorm1d(self.L)
-        #self.pool1 = nn.MaxPool1d()(3, stride=2)
                     
         self.gnn_pool = DenseSAGEConv(self.L, self.C)
         self.bn2 = torch.nn.BatchNorm1d(self.C)
@@ -65,17 +64,19 @@ class GraphBased(nn.Module):
 
         # Embedding
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
-
+        loss_emb_1 = self.auxiliary_loss(A, Z)
+        
+        
         # Clustering
         S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
         S = F.leaky_relu(self.mlp(S), negative_slope=0.01)
 
         # Coarsened graph   
-        X, adj_matrix, l1, e1 = dense_diff_pool(Z, A, S)
+        X, A, l1, e1 = dense_diff_pool(Z, A, S)
 
         # Embedding 2
-        X = F.leaky_relu(self.gnn_embd(X, adj_matrix), negative_slope=0.01) # [C, 500]
-        # loss_emb_2 = self.pool1(X)
+        X = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01) # [C, 500]
+        loss_emb_2 = self.auxiliary_loss(A, X)
         
         # Concat
         X = X.view(1, -1)
@@ -93,7 +94,7 @@ class GraphBased(nn.Module):
             print("Y_hat : ", Y_hat)
         
 
-        return Y_prob, Y_hat, l1 
+        return Y_prob, Y_hat, l1 + loss_emb_1 + loss_emb_2
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -114,6 +115,20 @@ class GraphBased(nn.Module):
 
     def euclidean_distance_(self, X, Y):
         return torch.sqrt(torch.dot(X, X) - 2 * torch.dot(X, Y) + torch.dot(Y, Y))
+    
+    def auxiliary_loss(self, A, S):
+        '''
+            A: adjecment matrix {0,1} K x K
+            S: nodes R K x D
+        '''
+        A = A.unsqueeze(0) if A.dim() == 2 else A
+        S = S.unsqueeze(0) if S.dim() == 2 else S
+    
+        link_loss = A - torch.matmul(S, S.transpose(1, 2))
+        link_loss = torch.norm(link_loss, p=2)
+        link_loss = link_loss / A.numel()
+        
+        return link_loss
 
     # AUXILIARY METHODS
     def calculate_classification_error(self, X, Y):

@@ -44,7 +44,7 @@ def load_train_test_val(ds):
     test = []
     val = []
     
-    step = N * 1 // 10
+    step = N * 1 // 2
     [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
    
