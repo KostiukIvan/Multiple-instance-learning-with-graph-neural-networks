@@ -45,19 +45,23 @@ def load_train_test(args):
     train_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
                                                    mean_bag_length=args.mean_bag_length,
                                                    var_bag_length=args.var_bag_length,
-                                                   num_bag=args.num_bags_train,
+                                                   num_bag=100,
                                                    seed=args.seed,
                                                    train=True),
                                          batch_size=1,
+                                         num_workers=1,
+                                         pin_memory=True,
                                          shuffle=True)
     
     test_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
                                                   mean_bag_length=args.mean_bag_length,
                                                   var_bag_length=args.var_bag_length,
-                                                  num_bag=args.num_bags_test,
+                                                  num_bag=150,
                                                   seed=args.seed,
                                                   train=False),
                                         batch_size=1,
+                                        num_workers=1,
+                                        pin_memory=True,
                                         shuffle=False)
     return train_loader, test_loader
     

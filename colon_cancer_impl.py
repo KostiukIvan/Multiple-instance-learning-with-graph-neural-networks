@@ -44,7 +44,7 @@ def load_train_test_val(ds):
     test = []
     val = []
     
-    step = N * 1 // 2
+    step = N * 1 // 5
     [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
    
@@ -115,15 +115,16 @@ class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
         self.L = 512
-        self.C = 2
-        self.CS = 4 # number of classes
+        self.C = 1 # number of clusters
+        self.classes = 4 # number of classes
+
         
-        self.n = 0.5 # 0 - no-edges; infinity - fully-conected graph
-        self.n_step = 0.01 # inrement n if not enoght items
+        self.n = 50 # 0 - no-edges; infinity - fully-conected graph
+        self.n_step = 0.5 # inrement n if not enoght items
         self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
-        
+
         self.feature_extractor_part1 = nn.Sequential(
-            nn.Conv2d(3, 20, kernel_size=5),
+            nn.Conv2d(1, 20, kernel_size=5),
             nn.ReLU(),
             nn.MaxPool2d(2, stride=2),
             nn.Conv2d(20, 50, kernel_size=5),
@@ -132,21 +133,27 @@ class Net(torch.nn.Module):
         )
 
         self.feature_extractor_part2 = nn.Sequential(
-            nn.Linear(450, self.L),
+            nn.Linear(50 * 4 * 4, self.L),
             nn.ReLU(),
         )
 
-        self.gnn1_pool = GNN(self.L, self.C)
-        self.gnn1_embed = GNN(self.L, self.L, lin=False)
-
-
-        self.gnn3_embed = GNN(self.L, self.L, lin=False)
-
-        input_layers = int(self.L)
-        hidden_layers = int(self.L / 2)
-        self.lin1 = torch.nn.Linear(input_layers, hidden_layers)
-        self.lin2 = torch.nn.Linear(hidden_layers, self.CS)
+        self.gnn_embd = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
+        self.bn1 = nn.BatchNorm1d(self.L)
+                    
+        self.gnn_pool = DenseSAGEConv(self.L, self.C)
+        self.bn2 = torch.nn.BatchNorm1d(self.C)
+        self.mlp = nn.Linear(self.C, self.C, bias=True) 
         
+        self.gnn_embd2 = DenseSAGEConv(self.L, self.L)    # correct : https://arxiv.org/abs/1706.02216
+        self.bn3 = nn.BatchNorm1d(self.L)
+        
+        input_layers = int(self.L * self.C)
+        hidden_layers = int(self.L * self.C / 2)
+        output_layer = self.classes
+        self.lin1 = nn.Linear(input_layers, hidden_layers, bias=True) 
+        self.lin2 = nn.Linear(hidden_layers, output_layer, bias=True)
+        
+
         # Load the pretrained model
         self.feature_model = models.resnet18(pretrained=True)
         # Use the model object to select the desired layer
@@ -158,27 +165,35 @@ class Net(torch.nn.Module):
         x = x.squeeze(0) # [9, 1, 28, 28]
         
         H = torch.stack([get_vector(self.feature_model, self.feature_layer, img) for img in x]).cuda()
-        # dim = x.shape[0]
-        # H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
-        # H = H.view(dim,-1) # [9, 800]
-        # H = self.feature_extractor_part2(H)  # NxL  [9, 500]
-        # H = x.view(-1, 28 * 28)
 
-        x, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
-        adj = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
+        X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
+        A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
 
-        s = self.gnn1_pool(x, adj)
-        x = self.gnn1_embed(x, adj)
+        # Embedding
+        Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
+        loss_emb_1 = self.auxiliary_loss(A, Z)
         
-        x, adj, l1, e1 = dense_diff_pool(x, adj, s)
-        
-        x = self.gnn3_embed(x, adj)
+        # Clustering
+        S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
+        S = F.leaky_relu(self.mlp(S), negative_slope=0.01)
 
-        x = x.mean(dim=1)
-        x = F.relu(self.lin1(x))
-        x = self.lin2(x)
+        # Coarsened graph   
+        X, A, l1, e1 = dense_diff_pool(Z, A, S)
+
+        # Embedding 2
+        X = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01) # [C, 500]
+        loss_emb_2 = self.auxiliary_loss(A, X)
         
-        return F.softmax(x, dim=-1), l1 , e1 
+        # Concat
+        X = X.view(1, -1)
+
+        # MLP
+        X = F.leaky_relu(self.lin1(X), 0.01)
+        X = F.leaky_relu(self.lin2(X), 0.01)
+         
+        Y_prob = F.softmax(X.squeeze(), dim=0)
+
+        return Y_prob, (l1 + loss_emb_1 + loss_emb_2)
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -188,20 +203,69 @@ class Net(torch.nn.Module):
         for cur_i, cur_node in enumerate(bag):
             for alt_i, alt_node in enumerate(bag):
                 # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
-                # if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
-                if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
+                if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
+                # if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
                 # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
                     edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
-            return self.convert_bag_to_graph_(bag, N = (N - self.n_step))
+            return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
 
 
     def euclidean_distance_(self, X, Y):
         return torch.sqrt(torch.dot(X, X) - 2 * torch.dot(X, Y) + torch.dot(Y, Y))
+    
+    def auxiliary_loss(self, A, S):
+        '''
+            A: adjecment matrix {0,1} K x K
+            S: nodes R K x D
+        '''
+        A = A.unsqueeze(0) if A.dim() == 2 else A
+        S = S.unsqueeze(0) if S.dim() == 2 else S
+        
+        S = torch.softmax(S, dim=-1)
+    
+        link_loss = A - torch.matmul(S, S.transpose(1, 2))
+        link_loss = torch.norm(link_loss, p=2)
+        link_loss = link_loss / A.numel()
+        
+        return link_loss
+
+    def cross_entropy_loss(self, X, target):
+        Y_prob, l2 = self.forward(X)
+        
+        Y_prob = Y_prob.unsqueeze(0) if Y_prob.dim() == 1 else Y_prob
+        target = torch.tensor(target, dtype=torch.long)
+        
+        print(Y_prob.shape, Y_prob)
+        print(target.shape, target)
+        loss = nn.CrossEntropyLoss()
+        l1 = loss(Y_prob, target) 
+    
+        return l1 + l2
+
+    def negative_log_likelihood_loss(self, X, target):
+        Y_prob, l2 = self.forward(X)
+        
+        Y_prob = Y_prob.unsqueeze(0) if Y_prob.dim() == 1 else Y_prob
+        target = torch.tensor(target, dtype=torch.long)
+        
+        loss = nn.NLLLoss()
+        l1 = -1 * loss(Y_prob, target) 
+    
+        return l1 + l2
+    
+    def calculate_objective(self, X, target):
+        target = target.float()
+        Y_prob, l1 = self.forward(X)
+        Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
+        neg_log_likelihood = -1. * (target * torch.log(Y_prob) + (1. - target) * torch.log(1. - Y_prob))  # negative log bernoulli
+
+        return neg_log_likelihood.data[0]
+
 
 
 model = Net().cuda()
@@ -211,7 +275,7 @@ criterion = nn.BCELoss()
 
 train_loader, test_loader, val_loader = load_train_test_val(ds) 
 
-def train(epoch):
+def train(train_loader):
     model.train()
     loss_all = 0
     correct = 0
@@ -222,8 +286,9 @@ def train(epoch):
         if torch.cuda.is_available():
             data, target = data.cuda(), target.cuda()
         optimizer.zero_grad()
-        output, l, _ = model(data)
-        loss = criterion(output.squeeze(), target.type(torch.float))  + l
+        output, l = model(data)
+        loss = criterion(output.squeeze(), target.type(torch.float)) + l
+        #loss = model.cross_entropy_loss(data, target)
         loss.backward()
         loss_all += target.size(0) * loss.item()
         optimizer.step()
@@ -241,9 +306,10 @@ def test(loader):
         if torch.cuda.is_available():
             data, target = data.cuda(), target.cuda()
 
-        pred, _, _ = model(data)  
+        pred, _ = model(data)  
+        pred = torch.ge(pred, 0.5)
         correct += pred.eq(target.view(-1)).sum().item()
-        
+   
     print()
     return correct / (len(loader) * len(loader[0][1]))
 
@@ -252,7 +318,7 @@ def test(loader):
 
 best_val_acc = test_acc = 0
 for epoch in range(1, 300):
-    train_loss, train_acc = train(epoch)
+    train_loss, train_acc = train(train_loader)
     val_acc = test(val_loader)
     if val_acc > best_val_acc:
         test_acc = test(test_loader)

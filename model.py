@@ -84,14 +84,7 @@ class GraphBased(nn.Module):
         X = F.leaky_relu(self.lin1(X), 0.01)
         X = F.leaky_relu(self.lin2(X), 0.01)
         
-       
         Y_prob = F.softmax(X.squeeze(), dim=0)
-        #Y_hat = torch.ge(F.softmax(X.squeeze(), dim=0), 0.5).float()
-        #Y_hat = torch.argmax(F.softmax(X.squeeze(), dim=0))
-        if False:
-            print("Y_prob : ", Y_prob)
-
-        
 
         return Y_prob, (l1 + loss_emb_1 + loss_emb_2)
     
