@@ -44,7 +44,7 @@ def load_train_test_val(ds):
     test = []
     val = []
     
-    step = N * 1 // 5
+    step = N * 1 // 20
     [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
    
@@ -124,7 +124,7 @@ class Net(torch.nn.Module):
         self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
 
         self.feature_extractor_part1 = nn.Sequential(
-            nn.Conv2d(1, 20, kernel_size=5),
+            nn.Conv2d(3, 20, kernel_size=5),
             nn.ReLU(),
             nn.MaxPool2d(2, stride=2),
             nn.Conv2d(20, 50, kernel_size=5),
@@ -133,7 +133,7 @@ class Net(torch.nn.Module):
         )
 
         self.feature_extractor_part2 = nn.Sequential(
-            nn.Linear(50 * 4 * 4, self.L),
+            nn.Linear(50 * 3 * 3, self.L),
             nn.ReLU(),
         )
 
@@ -164,7 +164,11 @@ class Net(torch.nn.Module):
     def forward(self, x):
         x = x.squeeze(0) # [9, 1, 28, 28]
         
-        H = torch.stack([get_vector(self.feature_model, self.feature_layer, img) for img in x]).cuda()
+        # H = torch.stack([get_vector(self.feature_model, self.feature_layer, img) for img in x]).cuda()
+        H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
+        H = H.view(-1, 50 * 3 * 3) # [9, 800]
+        H = self.feature_extractor_part2(H)  # NxL  [9, 500]
+
 
         X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
         A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
