@@ -4,6 +4,7 @@ import scipy.io
 import numpy as np 
 from PIL import Image
 from skimage import io, color
+import itertools
 
 import torch
 import torch.nn as nn
@@ -21,7 +22,7 @@ from chamferdist import ChamferDistance
 from colon_dataset import ColonCancerBagsCross
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/python_data/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+ds = ColonCancerBagsCross(path='C:\\Users\\ivank\\UJ\\Computer Vision\\Final Project\\Datasets\\ColonCancer\\ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -81,7 +82,7 @@ class GNN(torch.nn.Module):
 
         return x
 
-
+edge_pairs_dynamic = {}
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -153,19 +154,30 @@ class Net(torch.nn.Module):
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
-        edge_index = []
-        chamferDist = ChamferDistance()
-        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-        for cur_i, cur_node in enumerate(bag):
-            for alt_i, alt_node in enumerate(bag):
-                if cur_i != alt_i :
-                    edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
+        l = len(bag)
+        
+        if l in edge_pairs_dynamic:
+            edge_index = edge_pairs_dynamic[l]
+        else:
+            edge_index = [torch.tensor([cur_i, alt_i], device=device) for cur_i, alt_i in itertools.product(range(len(bag)), repeat=2)]
+            edge_pairs_dynamic[l] = edge_index
+
+        # chamferDist = ChamferDistance()
+        # cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+
+        # for cur_i, cur_node in enumerate(bag):
+        #     for alt_i, alt_node in enumerate(bag):
+        #         # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
+        #         if cur_i != alt_i : #and self.euclidean_distance_(cur_node, alt_node) < N:
+        #         # if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
+        #         # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
+        #             edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
             return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
-        
         return bag, torch.stack(edge_index).transpose(1, 0)
+
     
     def auxiliary_loss(self, A, S):
         '''
@@ -192,6 +204,8 @@ class Net(torch.nn.Module):
         for idx, tar in enumerate(target):
             if tar.eq(1):
                 loss += criterium(output, torch.tensor([idx], dtype=torch.long).cuda())
+            else:
+                loss += 1 - criterium(output, torch.tensor([idx], dtype=torch.long).cuda())
 
         return loss
 
@@ -267,9 +281,8 @@ best_val_acc = test_acc = 0
 for epoch in range(1, 300):
     train_loss, train_acc = train(train_loader)
     val_acc = test(val_loader)
-    if val_acc > best_val_acc:
-        test_acc = test(test_loader)
-        best_val_acc = val_acc
+    test_acc = test(test_loader)
+    best_val_acc = val_acc
     print('Epoch: {:03d}, Train Loss: {:.7f}, Train acc: {:.7f}, '
           'Val Acc: {:.7f}, Test Acc: {:.7f}'.format(epoch, train_loss, train_acc,
                                                      val_acc, test_acc))
