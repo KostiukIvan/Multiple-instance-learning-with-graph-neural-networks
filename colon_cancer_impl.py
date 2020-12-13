@@ -1,34 +1,26 @@
+import itertools
 import os
 import random
 
+import numpy as np
 import scipy.io
-import numpy as np 
-
-from PIL import Image
-from skimage import io, color
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data_utils
-
-import torchvision.transforms as transforms
-import torchvision.models as models
-
-
 import torch_geometric.utils as pyg_ut
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
+from skimage import color, io
+from torch.autograd import Variable
 from torch_geometric.nn import DenseSAGEConv, dense_diff_pool
 
 import python_data.utils_augmentation as utils_augmentation
-
-
-from torch.autograd import Variable
-from dataloader import MnistBags
-from chamferdist import ChamferDistance
 from colon_dataset import ColonCancerBagsCross
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-
-ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/python_data/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+ds = ColonCancerBagsCross(path='.\\python_data\\ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -40,18 +32,15 @@ to_tensor = transforms.ToTensor()
 
 def load_train_test_val(ds):
     N = len(ds)
-    train = []
-    test = []
-    val = []
-    
     step = N * 1 // 3
-    [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
+
+    train = [(ds[i][0], ds[i][1][0]) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
    
-    [val.append((ds[i][0], ds[i][1][0])) for i in range(step, step + step // 4)]
+    val = [(ds[i][0], ds[i][1][0]) for i in range(step, step + step // 4)]
     print(f"valid loaded {len(val)} items")
 
-    [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
+    test = [(ds[i][0], ds[i][1][0]) for i in range(step,  step + step // 2)]
     print(f"test loaded {len(test)} items")
     
     return train, test, val
@@ -90,6 +79,7 @@ class GNN(torch.nn.Module):
         return x
 
 
+edge_pairs_dynamic = {}
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -150,7 +140,7 @@ class Net(torch.nn.Module):
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
 
         X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
-        A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
+        A = pyg_ut.to_dense_adj(E_idx.to(device), max_num_nodes=x.shape[0])
 
         # Embedding
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
@@ -179,21 +169,28 @@ class Net(torch.nn.Module):
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
-        edge_index = []
-        chamferDist = ChamferDistance()
-        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-        for cur_i, cur_node in enumerate(bag):
-            for alt_i, alt_node in enumerate(bag):
-                # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
-                if cur_i != alt_i : #and self.euclidean_distance_(cur_node, alt_node) < N:
-                # if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
-                # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
-                    edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
+        l = len(bag)
+        
+        if l in edge_pairs_dynamic:
+            edge_index = edge_pairs_dynamic[l]
+        else:
+            edge_index = [torch.tensor([cur_i, alt_i], device=device) for cur_i, alt_i in itertools.product(range(len(bag)), repeat=2)]
+            edge_pairs_dynamic[l] = edge_index
+
+        # chamferDist = ChamferDistance()
+        # cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+
+        # for cur_i, cur_node in enumerate(bag):
+        #     for alt_i, alt_node in enumerate(bag):
+        #         # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
+        #         if cur_i != alt_i : #and self.euclidean_distance_(cur_node, alt_node) < N:
+        #         # if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
+        #         # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
+        #             edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
             return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
-        
         return bag, torch.stack(edge_index).transpose(1, 0)
 
 
@@ -224,7 +221,7 @@ class Net(torch.nn.Module):
         loss = 0.0
         for idx, tar in enumerate(target):
             if tar.eq(1):
-                loss += criterium(output, torch.tensor([idx], dtype=torch.long).cuda())
+                loss += criterium(output, torch.tensor([idx], dtype=torch.long).to(device))
 
         return loss
 
@@ -248,7 +245,7 @@ class Net(torch.nn.Module):
         return neg_log_likelihood.data[0]
 
 
-
+print("Loading model")
 model = Net().cuda()
 optimizer = torch.optim.Adam(model.parameters(),lr=3e-4, betas=(0.9, 0.999), weight_decay=1e-3)
 criterion = nn.BCELoss()
@@ -261,11 +258,11 @@ def train(train_loader):
     correct = 0
     
     for batch_idx, (data, target) in enumerate(train_loader):
+        print(f"{int(batch_idx / len(train_loader) * 100)}%")
         if data.shape[0] == 1: # prevent when bag's length equal 1
             continue
         target = torch.tensor(target)
-        if torch.cuda.is_available():
-            data, target = data.cuda(), target.cuda() 
+        data, target = data.to(device), target.to(device) 
         optimizer.zero_grad()
         output, l = model(data)
         # loss = criterion(output.squeeze(), target.type(torch.float)) + l / 1000
@@ -284,8 +281,7 @@ def test(loader):
         if data.shape[0] == 1:
             continue
         target = torch.tensor(target)
-        if torch.cuda.is_available():
-            data, target = data.cuda(), target.cuda()
+        data, target = data.to(device), target.to(device)
 
         pred, _ = model(data)  
         pred = torch.ge(pred, 0.5)
