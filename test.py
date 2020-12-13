@@ -1,102 +1,62 @@
-import os.path as osp
-from math import ceil
+import os
+import random
+import scipy.io
+import numpy as np 
+from PIL import Image
+from skimage import io, color
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data_utils
-
-import torchvision.models as models
 import torchvision.transforms as transforms
-
-from torch_geometric.datasets import TUDataset
-import torch_geometric.transforms as T
+import torchvision.models as models
 import torch_geometric.utils as pyg_ut
-from torch_geometric.data import DenseDataLoader
 from torch_geometric.nn import DenseSAGEConv, dense_diff_pool
-
-
+import python_data.utils_augmentation as utils_augmentation
 from torch.autograd import Variable
+
 from dataloader import MnistBags
 from chamferdist import ChamferDistance
-from PIL import Image
+from colon_dataset import ColonCancerBagsCross
+
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/python_data/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-
-max_nodes = 150
-
-
-class MyFilter(object):
-    def __call__(self, data):
-        return data.num_nodes <= max_nodes
-    
-scaler = transforms.Scale((224, 224))
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
-to_tensor = transforms.ToTensor()
-
-def get_vector(model, layer, image):
-
-    # 2. Create a PyTorch Variable with the transformed image
-    t_img = Variable(normalize(scaler(image).repeat(3,1,1)).unsqueeze(0))
-
-    # 3. Create a vector of zeros that will hold our feature vector
-    #    The 'avgpool' layer has an output size of 512
-    my_embedding = torch.zeros(512)
-    # 4. Define a function that will copy the output of a layer
-    def copy_data(m, i, o):
-        my_embedding.copy_(o.data.reshape(o.data.size(1)))
-    # 5. Attach that function to our selected layer
-    h = layer.register_forward_hook(copy_data)
-    # 6. Run the model on our transformed image
-    model(t_img)
-    # 7. Detach our copy function from the layer
-    h.remove()
-    # 8. Return the feature vector
-    return my_embedding
-
-def load_train_test():
-    print('Load Train and Test Set')
-    
-    train_loader = data_utils.DataLoader(MnistBags(target_number=9,
-                                                   mean_bag_length=10,
-                                                   var_bag_length=2,
-                                                   num_bag=300,
-                                                   seed=1,
-                                                   train=True),
-                                         batch_size=1,
-                                         shuffle=True)
-    
-    test_loader = data_utils.DataLoader(MnistBags(target_number=9,
-                                                  mean_bag_length=10,
-                                                  var_bag_length=2,
-                                                  num_bag=100,
-                                                  seed=1,
-                                                  train=False),
-                                        batch_size=1,
-                                        shuffle=False)
-    
-    val_loader = data_utils.DataLoader(MnistBags(target_number=9,
-                                                  mean_bag_length=10,
-                                                  var_bag_length=2,
-                                                  num_bag=50,
-                                                  seed=1,
-                                                  train=False),
-                                        batch_size=1,
-                                        shuffle=False)
-    return train_loader, test_loader, val_loader
+def load_train_test_val(ds):
+    N = len(ds)
+    train = []
+    test = []
+    val = []
+    step = N * 1 // 3
+    [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
+    print(f"train loaded {len(train)} items")
+    [val.append((ds[i][0], ds[i][1][0])) for i in range(step, step + step // 4)]
+    print(f"valid loaded {len(val)} items")
+    [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
+    print(f"test loaded {len(test)} items")
+    return train, test, val
 
 
 class GNN(torch.nn.Module):
-    def __init__(self, in_channels, out_channels,
+    def __init__(self, in_channels, hidden_channels, out_channels,
                  normalize=False, add_loop=False, lin=True):
         super(GNN, self).__init__()
 
-        self.conv1 = DenseSAGEConv(in_channels, out_channels, normalize)
-        self.bn1 = torch.nn.BatchNorm1d(out_channels)
- 
+        self.add_loop = add_loop
+
+        self.conv1 = DenseSAGEConv(in_channels, hidden_channels, normalize)
+        self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+        self.conv2 = DenseSAGEConv(hidden_channels, hidden_channels, normalize)
+        self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
+        self.conv3 = DenseSAGEConv(hidden_channels, out_channels, normalize)
+        self.bn3 = torch.nn.BatchNorm1d(out_channels)
+
         if lin is True:
-            self.lin = torch.nn.Linear(out_channels,  out_channels)
+            self.lin = torch.nn.Linear(2 * hidden_channels + out_channels,
+                                       out_channels)
         else:
             self.lin = None
 
@@ -108,13 +68,16 @@ class GNN(torch.nn.Module):
         x = x.view(batch_size, num_nodes, num_channels)
         return x
 
-    def forward(self, x, adj):
-        # batch_size, num_nodes, in_channels = x.size()
+    def forward(self, x, adj, mask=None):
+        x0 = x
+        x1 = self.bn(1, F.relu(self.conv1(x0, adj, mask)))
+        x2 = self.bn(2, F.relu(self.conv2(x1, adj, mask)))
+        x3 = self.bn(3, F.relu(self.conv3(x2, adj, mask)))
 
-        x = self.bn(1, F.leaky_relu(self.conv1(x, adj), negative_slope=0.01))
+        x = torch.cat([x1, x2, x3], dim=-1)
 
         if self.lin is not None:
-            x = F.leaky_relu(self.lin(x), negative_slope=0.01)
+            x = F.relu(self.lin(x))
 
         return x
 
@@ -122,16 +85,16 @@ class GNN(torch.nn.Module):
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.L = 512
-        self.C = 2
-        self.classes = 2 # number of classes
-        
-        self.n = 0.5 # 0 - no-edges; infinity - fully-conected graph
-        self.n_step = 0.01 # inrement n if not enoght items
-        self.num_adj_parm = 0.1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
-        
+        self.L = 50
+        self.C = 4 # number of clusters
+        self.classes = 4 # number of classes
+
+        self.n = 50 # 0 - no-edges; infinity - fully-conected graph
+        self.n_step = 0.5 # inrement n if not enoght items
+        self.num_adj_parm = 1 # this parameter is used to define min graph adjecment len. num_adj_parm * len(bag). 0 - disable
+
         self.feature_extractor_part1 = nn.Sequential(
-            nn.Conv2d(1, 20, kernel_size=5),
+            nn.Conv2d(3, 20, kernel_size=5),
             nn.ReLU(),
             nn.MaxPool2d(2, stride=2),
             nn.Conv2d(20, 50, kernel_size=5),
@@ -140,48 +103,53 @@ class Net(torch.nn.Module):
         )
 
         self.feature_extractor_part2 = nn.Sequential(
-            nn.Linear(50 * 4 * 4, self.L),
+            nn.Linear(50 * 3 * 3, self.L),
             nn.ReLU(),
         )
 
-        self.gnn1_pool = GNN(self.L, self.C)
-        self.gnn1_embed = GNN(self.L, self.L, lin=False)
+        self.gnn_pool = GNN(self.L, 64, self.C, add_loop=True)
+        self.gnn_embed = GNN(self.L, 64, self.L, add_loop=True, lin=False)
 
+        self.gnn_embed_2 = GNN(2 * 64 + self.L, 64, self.L, add_loop=True, lin=False)
 
-        self.gnn3_embed = GNN(self.L, self.L, lin=False)
-
-        input_layers = int(self.L)
-        hidden_layers = int(self.L / 2)
-        self.lin1 = torch.nn.Linear(input_layers, hidden_layers)
-        self.lin2 = torch.nn.Linear(hidden_layers, self.classes)
-        
-        # Load the pretrained model
-        self.feature_model = models.resnet18(pretrained=True).cuda()
-        # Use the model object to select the desired layer
-        self.feature_layer = self.feature_model._modules.get('avgpool')
-        # Set model to evaluation mode
-        self.feature_model.eval()   
+        input_layers = int((2 * 64 + self.L) * self.C)
+        self.lin1 = nn.Linear(input_layers, int(input_layers / 2), bias=True) 
+        self.lin2 = nn.Linear(int(input_layers / 2), self.classes, bias=True)
 
     def forward(self, x):
-        
         x = x.squeeze(0) # [9, 1, 28, 28]
-
-        H = torch.stack([get_vector(self.feature_model, self.feature_layer, img) for img in x]).cuda()
-
-        x, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
-        adj = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
+        x = x.unsqueeze(0) if x.dim() == 3 else x
         
-        s = self.gnn1_pool(x, adj)
-        x = self.gnn1_embed(x, adj)
-        
-        x, adj, l1, e1 = dense_diff_pool(x, adj, s)
-        
-        x = self.gnn3_embed(x, adj)
+        H = self.feature_extractor_part1(x) # [9, 50, 4, 4]
+        H = H.view(-1, 50 * 3 * 3) # [9, 800]
+        H = self.feature_extractor_part2(H)  # NxL  [9, 500]
 
-        x = x.mean(dim=1)
-        x = F.relu(self.lin1(x))
-        x = self.lin2(x)
-        return F.log_softmax(x, dim=-1), l1 , e1 
+        X, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A]
+        A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0])
+
+        # Embedding
+        Z = F.leaky_relu(self.gnn_embed(X, A), negative_slope=0.01)
+        loss_emb_1 = self.auxiliary_loss(A, Z)
+        
+        # Clustering
+        S = F.leaky_relu(self.gnn_pool(X, A), negative_slope=0.01)
+
+        # Coarsened graph   
+        X, A, l1, e1 = dense_diff_pool(Z, A, S)
+
+        # Embedding 2
+        X = F.leaky_relu(self.gnn_embed_2(X, A), negative_slope=0.01) # [C, 500]
+        loss_emb_2 = self.auxiliary_loss(A, X)
+
+        # Concat
+        X = X.view(1, -1)
+
+        # MLP
+        X = F.leaky_relu(self.lin1(X), 0.01)
+        X = F.leaky_relu(self.lin2(X), 0.01)
+         
+        Y_prob = X 
+        return Y_prob, (l1 + loss_emb_1 + loss_emb_2)
     
     # GNN methods
     def convert_bag_to_graph_(self, bag, N):
@@ -190,59 +158,88 @@ class Net(torch.nn.Module):
         cos = nn.CosineSimilarity(dim=1, eps=1e-6)
         for cur_i, cur_node in enumerate(bag):
             for alt_i, alt_node in enumerate(bag):
-                # print(cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)))
-                # if cur_i != alt_i and self.euclidean_distance_(cur_node, alt_node) < N:
-                if cur_i != alt_i and cos(cur_node.unsqueeze(0), alt_node.unsqueeze(0)) > N:
-                # if cur_i != alt_i and chamferDist(cur_node.view(1, 1, -1), alt_node.view(1, 1, -1)) < N:
+                if cur_i != alt_i :
                     edge_index.append(torch.tensor([cur_i, alt_i]).cuda())
                     
         if len(edge_index) < self.num_adj_parm * bag.shape[0]:
             print(f"INFO: get number of adjecment {len(edge_index)}, min len is {self.num_adj_parm * bag.shape[0]}")
-            return self.convert_bag_to_graph_(bag, N = (N - self.n_step))
+            return self.convert_bag_to_graph_(bag, N = (N + self.n_step))
         
         return bag, torch.stack(edge_index).transpose(1, 0)
+    
+    def auxiliary_loss(self, A, S):
+        '''
+            A: adjecment matrix {0,1} K x K
+            S: nodes R K x D
+        '''
+        A = A.unsqueeze(0) if A.dim() == 2 else A
+        S = S.unsqueeze(0) if S.dim() == 2 else S
+        
+        S = torch.softmax(S, dim=-1)
+    
+        link_loss = A - torch.matmul(S, S.transpose(1, 2))
+        link_loss = torch.norm(link_loss, p=2)
+        link_loss = link_loss / A.numel()
+        
+        return link_loss
+
+    def cross_entropy_loss(self, output, target):  
+        output = output.unsqueeze(0) if output.dim() == 1 else output
+        target = torch.tensor(target, dtype=torch.long)
+        criterium = nn.CrossEntropyLoss()
+
+        loss = 0.0
+        for idx, tar in enumerate(target):
+            if tar.eq(1):
+                loss += criterium(output, torch.tensor([idx], dtype=torch.long).cuda())
+
+        return loss
+
+    def negative_log_likelihood_loss(self, X, target):
+        Y_prob, l2 = self.forward(X)
+        
+        Y_prob = Y_prob.unsqueeze(0) if Y_prob.dim() == 1 else Y_prob
+        target = torch.tensor(target, dtype=torch.long)
+        
+        loss = nn.NLLLoss()
+        l1 = -1 * loss(Y_prob, target) 
+    
+        return l1 + l2
+    
+    def calculate_objective(self, X, target):
+        target = target.float()
+        Y_prob, l1 = self.forward(X)
+        Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
+        neg_log_likelihood = -1. * (target * torch.log(Y_prob) + (1. - target) * torch.log(1. - Y_prob))  # negative log bernoulli
+
+        return neg_log_likelihood.data[0]
 
 
-    def euclidean_distance_(self, X, Y):
-        return torch.sqrt(torch.dot(X, X) - 2 * torch.dot(X, Y) + torch.dot(Y, Y))
 
+model = Net().cuda()
+optimizer = torch.optim.Adam(model.parameters(),lr=3e-4, betas=(0.9, 0.999), weight_decay=1e-3)
+criterion = nn.BCELoss()
 
+train_loader, test_loader, val_loader = load_train_test_val(ds) 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = Net().to(device)
-
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-
-def train(epoch):
+def train(train_loader):
     model.train()
     loss_all = 0
     correct = 0
     
-    for batch_idx, (data, label) in enumerate(train_loader):
-        data = data.to(device)
-        bag_label = label[0]
+    for batch_idx, (data, target) in enumerate(train_loader):
+        if data.shape[0] == 1: # prevent when bag's length equal 1
+            continue
+        target = torch.tensor(target)
         if torch.cuda.is_available():
-            data, bag_label = data.cuda(), bag_label.cuda()
-        
-        data, bag_label = Variable(data), Variable(bag_label)
-            
+            data, target = data.cuda(), target.cuda() 
         optimizer.zero_grad()
-        output, l, _ = model(data)
-        #pred = model(data)[0].max(dim=1)[1]
-        
-        if bag_label:
-            target = torch.tensor([1.], dtype=torch.long).cuda()
-        else:
-            target = torch.tensor([0.], dtype=torch.long).cuda()
-        
-        loss = F.nll_loss(output, target) + l
+        output, l = model(data)
+        # loss = criterion(output.squeeze(), target.type(torch.float)) + l / 1000
+        loss = model.cross_entropy_loss(output, target) + l / 1000
         loss.backward()
-        loss_all += target.size(0) * loss.item()
-        
+        loss_all += loss.item()
         optimizer.step()
-        
-        #correct += pred.eq(target.view(-1)).sum().item()
     return loss_all / len(train_loader), 0
 
 
@@ -250,30 +247,25 @@ def train(epoch):
 def test(loader):
     model.eval()
     correct = 0
-
-    for batch_idx, (data, label) in enumerate(loader):
-        data = data.to(device)
-        bag_label = label[0]
+    for batch_idx, (data, target) in enumerate(loader):
+        if data.shape[0] == 1:
+            continue
+        target = torch.tensor(target)
         if torch.cuda.is_available():
-            data, bag_label = data.cuda(), bag_label.cuda()
-            
-        if bag_label:
-            target = torch.tensor([1.], dtype=torch.long).cuda()
-        else:
-            target = torch.tensor([0.], dtype=torch.long).cuda()
-            
-        pred = model(data)[0].max(dim=1)[1]
-        
+            data, target = data.cuda(), target.cuda()
+
+        pred, _ = model(data)  
+        pred = torch.ge(pred, 0.5)
         correct += pred.eq(target.view(-1)).sum().item()
-    return correct / len(loader.dataset)
+   
+    return correct / (len(loader) * len(loader[0][1]))
 
 
-
-train_loader, test_loader, val_loader = load_train_test()
+print("Cuda is is_available: ", torch.cuda.is_available())
 
 best_val_acc = test_acc = 0
 for epoch in range(1, 300):
-    train_loss, train_acc = train(epoch)
+    train_loss, train_acc = train(train_loader)
     val_acc = test(val_loader)
     if val_acc > best_val_acc:
         test_acc = test(test_loader)
