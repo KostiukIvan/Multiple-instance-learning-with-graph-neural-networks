@@ -56,7 +56,7 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
         self.L = 50
         self.C = 4 # number of clusters
-        self.classes = 4 # number of classes
+        self.classes = 2 # number of classes
 
         self.n = 50 # 0 - no-edges; infinity - fully-conected graph
         self.n_step = 0.5 # inrement n if not enoght items
@@ -155,19 +155,11 @@ class Net(torch.nn.Module):
 
     def cross_entropy_loss(self, output, target):  
         output = output.unsqueeze(0) if output.dim() == 1 else output
-        target = target.unsqueeze(0) if target.dim() == 1 else target
-
+        target = target.squeeze()
+        target = torch.tensor([target], dtype=torch.long).cuda()
+        
         criterion = nn.CrossEntropyLoss()
-
-        target = torch.tensor([[0.], [1.]], dtype=torch.long).cuda()
-        if torch.any(target == 0.):
-            output = torch.tensor([[torch.mean(output[torch.where(target == 0.)]), torch.mean(output[torch.where(target == 1.)])]]).cuda()
-        else:
-            output = torch.tensor([[torch.mean(output[torch.where(target == 1.)])]]).cuda()
-
-
-        loss = criterion(output, target[1])
-
+        loss = criterion(output, target)
         return loss
 
     def MSE(self, output, target):
@@ -206,3 +198,9 @@ class Net(torch.nn.Module):
         neg_log_likelihood = -1. * (target * torch.log(Y_prob) + (1. - target) * torch.log(1. - Y_prob))  # negative log bernoulli
 
         return neg_log_likelihood.data[0]
+
+    def calculate_classification_error(self, output, target):
+        pred = torch.argmax(output)
+        error = 1. - pred.eq(target).cpu().float().mean().data
+
+        return error

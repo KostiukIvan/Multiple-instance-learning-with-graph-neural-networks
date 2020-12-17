@@ -8,10 +8,12 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from dataloaders.mnist_bags_loader import MnistBags
-from models.MNIST import GraphBased
+from models.MNIST import GraphBased28x28x1, GraphBased32x32x3
+from dataloaders.colon_dataset import ColonCancerBagsCross
 
 
-def load_train_test(number_train_items=10, number_test_items=5):
+
+def load_MNIST_train_test(number_train_items=10, number_test_items=5):
     print('Loading Train and Test Sets')
     train_loader = data_utils.DataLoader(MnistBags(target_number=9,
                                                    mean_bag_length=10,
@@ -37,59 +39,90 @@ def load_train_test(number_train_items=10, number_test_items=5):
     print("Loaded")
     return train_loader, test_loader
     
+def load_CC_train_test(ds):
+    N = len(ds)
+    train = []
+    test = []
+    step = N * 2 // 3
+    [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
+    print(f"train loaded {len(train)} items")
+    [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
+    print(f"test loaded {len(test)} items")
+    return train, test
 
 
 
 def train(model, optimizer, train_loader):
-
     model.train()
     train_loss = 0.
-    train_error = 0.
+    batch = 4
+    ERROR = 1.
+    ALL = 1.
     for batch_idx, (data, label) in enumerate(train_loader):
-        bag_label = label[0]
+        if data.shape[0] == 1 and not MNIST:
+            continue
+
+        target = torch.tensor(label[0], dtype=torch.long)
         if torch.cuda.is_available():
-            data, bag_label = data.cuda(), bag_label.cuda()
+            data, target = data.cuda(), target.cuda()
 
-        optimizer.zero_grad()
-        loss = model.cross_entropy_loss(data, bag_label)
+        if batch_idx % batch == 0:
+            optimizer.zero_grad()
+
+        output, l = model(data)
+        loss = model.cross_entropy_loss(output, target) #+ l
+
+        ERROR += model.calculate_classification_error(output, target)
+        ALL += 1
         train_loss += loss
-        error, _ = model.calculate_classification_error(data, bag_label)
-        train_error += error
-        loss.backward()
-        optimizer.step()
 
-    train_loss /= len(train_loader)
-    train_error /= len(train_loader)
-    return train_loss, train_error
+        if batch_idx % batch == 0:
+            loss.backward()
+            optimizer.step()
+
+    train_loss /= ALL
+    ERROR /= ALL
+    return train_loss, ERROR
     
 def test(model, test_loader):
     model.eval()
-    test_loss = 0.
-    test_error = 0.
+
+    ERROR = 1.
+    ALL = 1.
     for batch_idx, (data, label) in enumerate(test_loader):
-        bag_label = label[0]
-        instance_labels = label[1]
+        if data.shape[0] == 1 and not MNIST:
+            continue
+
+        target = torch.tensor(label[0], dtype=torch.long)
         if torch.cuda.is_available():
-            data, bag_label = data.cuda(), bag_label.cuda()
+            data, target = data.cuda(), target.cuda()
+        
+        output, _ = model(data)  
+        ERROR += model.calculate_classification_error(output, target)
+        ALL += 1
 
-        error, predicted_label = model.calculate_classification_error(data, bag_label)
-        test_error += error
+    ERROR /= ALL
 
-    test_error /= len(test_loader)
-
-    return train_loss, train_error
+    return  ERROR
 
 
 if __name__ == "__main__":
     torch.manual_seed(1)
-    train_loader, test_loader = load_train_test(100, 50)
-        
-    model = GraphBased().cuda()
+    MNIST = False
+
+    if MNIST:
+        train_loader, test_loader = load_MNIST_train_test(300, 100)  
+        model = GraphBased28x28x1().cuda()
+    else:
+        ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/datasets/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+        train_loader, test_loader = load_CC_train_test(ds)
+        model = GraphBased32x32x3().cuda()
+
     optimizer = optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.999), weight_decay=1e-3)
     
-    for epoch in range(0, 100):
+    for epoch in range(0, 3000):
         train_loss, train_error = train(model, optimizer, train_loader)
-        test_loss, test_error = test(model, test_loader)
+        test_error = test(model, test_loader)
     
-        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss.cpu().detach().numpy(), train_error, test_error))
+        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss, train_error, test_error))
 
