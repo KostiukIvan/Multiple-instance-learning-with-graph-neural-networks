@@ -118,7 +118,7 @@ if __name__ == "__main__":
         train_loader, test_loader = load_CC_train_test(ds)
         model = GraphBased32x32x3().cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.999), weight_decay=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=3e-6, betas=(0.9, 0.999), weight_decay=1e-3)
     
     for epoch in range(0, 3000):
         train_loss, train_error = train(model, optimizer, train_loader)
