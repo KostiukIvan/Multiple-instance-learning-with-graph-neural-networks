@@ -64,10 +64,10 @@ class ColonCancerBagsCross(data_utils.Dataset):
         labels_list = []
         for dir in dir_list:
             # Get image name
-            img_name = dir.split('/')[-1]
+            img_name = dir.split('\\')[-1]
 
             # bmp to pillow
-            img_dir = dir + '/' + img_name + '.bmp'
+            img_dir = dir + '\\' + img_name + '.bmp'
             img = io.imread(img_dir)
             if img.shape[2] == 4:
                 img = color.rgba2rgb(img)
@@ -154,8 +154,7 @@ class ColonCancerBagsCross(data_utils.Dataset):
             if self.location_info:
                 bag_tensors.append(torch.cat(
                     (img_transform(img[:, :, :3]), 
-                    torch.from_numpy(img[:, :, 3:].astype(float).transpose((2, 0, 1))).float(),
-)))
+                    torch.from_numpy(img[:, :, 3:].astype(float).transpose((2, 0, 1))).float())))
             else:
                 bag_tensors.append(img_transform(img))
         
