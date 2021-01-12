@@ -18,11 +18,11 @@ import dataloaders.utils_augmentation as utils_augmentation
 from torch.autograd import Variable
 
 from chamferdist import ChamferDistance
-from dataloaders.colon_dataset import ColonCancerBagsCross
-from models.colone_cancer import Net
+from dataloaders.breast_cancer_bags_loader import BreastCancerBags
+from models.breast import Net
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-ds = ColonCancerBagsCross(path='datasets\\ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+ds = BreastCancerBags(path='datasets\\breast_cancer_dataset\\breast_cancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
 
 
 def load_train_test_val(ds):
@@ -30,10 +30,10 @@ def load_train_test_val(ds):
     train = []
     test = []
     val = []
-    step = N * 2 // 100
-    [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
+    step = N * 2 // 20
+    [train.append((ds[i][0], ds[i][1])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
-    [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
+    [test.append((ds[i][0], ds[i][1])) for i in range(step,  step + step // 2)]
     print(f"test loaded {len(test)} items")
     return train, test, val
 
@@ -52,7 +52,7 @@ def train(train_loader):
         if data.shape[0] == 1: # prevent when bag's length equal 1
             continue
         
-        target = torch.tensor(target[0], dtype=torch.float, requires_grad=True)
+        target = torch.tensor(target, dtype=torch.float, requires_grad=True)
         if torch.cuda.is_available():
             data, target = data.cuda(), target.cuda()
 
@@ -61,7 +61,9 @@ def train(train_loader):
 
         output, l = model(data)
 
-        loss = model.cross_entropy_loss(output, target) + l
+        netloss = (output[0][0] - target) ** 2
+        # loss = model.cross_entropy_loss(output, target) + l
+        loss = netloss + l
         loss_all += loss.item()
         if batch_idx % batch == 0:
             loss.backward()
