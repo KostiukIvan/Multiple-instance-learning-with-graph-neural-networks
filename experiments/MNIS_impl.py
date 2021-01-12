@@ -7,11 +7,15 @@ import torch.utils.data as data_utils
 import torch.optim as optim
 from torch.autograd import Variable
 
+from models.MNIST import GraphBased28x28x1, GraphBased27x27x3, GraphBased50x50x3
+
 from dataloaders.mnist_bags_loader import MnistBags
-from models.MNIST import GraphBased28x28x1, GraphBased32x32x3
 from dataloaders.colon_dataset import ColonCancerBagsCross
+from dataloaders.breast_cancer_bags_loader import BreastCancerBags
 
-
+MNIST = False
+COLON = False
+BREAST = True
 
 def load_MNIST_train_test(number_train_items=10, number_test_items=5):
     print('Loading Train and Test Sets')
@@ -43,13 +47,23 @@ def load_CC_train_test(ds):
     N = len(ds)
     train = []
     test = []
-    step = N * 2 // 3
+    step = N * 2 // 30
     [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
     [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
     print(f"test loaded {len(test)} items")
     return train, test
 
+def load_BREAST_train_test(ds):
+    N = len(ds)
+    train = []
+    test = []
+    step = N * 2 // 3
+    [train.append((ds[i][0], ds[i][1])) for i in range(0, step)]
+    print(f"train loaded {len(train)} items")
+    [test.append((ds[i][0], ds[i][1])) for i in range(step,  step + step // 2)]
+    print(f"test loaded {len(test)} items")
+    return train, test
 
 
 def train(model, optimizer, train_loader):
@@ -61,8 +75,12 @@ def train(model, optimizer, train_loader):
     for batch_idx, (data, label) in enumerate(train_loader):
         if data.shape[0] == 1 and not MNIST:
             continue
-
-        target = torch.tensor(label[0], dtype=torch.long)
+        
+        if BREAST:
+            target = torch.tensor(label, dtype=torch.long)
+        else:
+            target = torch.tensor(label[0], dtype=torch.long)
+        
         if torch.cuda.is_available():
             data, target = data.cuda(), target.cuda()
 
@@ -92,8 +110,12 @@ def test(model, test_loader):
     for batch_idx, (data, label) in enumerate(test_loader):
         if data.shape[0] == 1 and not MNIST:
             continue
-
-        target = torch.tensor(label[0], dtype=torch.long)
+        
+        if BREAST:
+            target = torch.tensor(label, dtype=torch.long)
+        else:
+            target = torch.tensor(label[0], dtype=torch.long)
+        
         if torch.cuda.is_available():
             data, target = data.cuda(), target.cuda()
         
@@ -108,19 +130,28 @@ def test(model, test_loader):
 
 if __name__ == "__main__":
     torch.manual_seed(1)
-    MNIST = False
+
 
     if MNIST:
         train_loader, test_loader = load_MNIST_train_test(300, 100)  
         model = GraphBased28x28x1().cuda()
-    else:
+        optimizer = optim.Adam(model.parameters(), lr=3e-6, betas=(0.9, 0.999), weight_decay=1e-3)
+    elif COLON:
         ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/datasets/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
         train_loader, test_loader = load_CC_train_test(ds)
-        model = GraphBased32x32x3().cuda()
+        model = GraphBased27x27x3().cuda()
+        optimizer = optim.Adam(model.parameters(), lr=3e-6, betas=(0.9, 0.999), weight_decay=1e-3)
+    elif BREAST:
+        ds = BreastCancerBags(path='/mnt/users/ikostiuk/local/MIL/breast_cancer_bags/breast_cancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+        train_loader, test_loader = load_BREAST_train_test(ds)
+        model = GraphBased50x50x3().cuda()
+        optimizer = optim.Adam(model.parameters(), lr=3e-6, betas=(0.9, 0.999), weight_decay=1e-3)
+    else:
+        print("You don't have such dataset!!!")
 
-    optimizer = optim.Adam(model.parameters(), lr=3e-6, betas=(0.9, 0.999), weight_decay=1e-3)
     
-    for epoch in range(0, 3000):
+    
+    for epoch in range(0, 5000):
         train_loss, train_error = train(model, optimizer, train_loader)
         test_error = test(model, test_loader)
     

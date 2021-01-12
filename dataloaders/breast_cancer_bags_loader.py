@@ -34,6 +34,7 @@ class BreastCancerBags(data_utils.Dataset):
 
         self.normalize_to_tensor_transform = transforms.Compose([
                                                                  utils_augmentation.HistoNormalize(),
+                                                                 transforms.Resize((50, 50)),
                                                                  transforms.ToTensor(),
                                                                  transforms.Normalize((0.5, 0.5, 0.5),
                                                                                       (0.5, 0.5, 0.5))
@@ -145,5 +146,7 @@ class BreastCancerBags(data_utils.Dataset):
         else:
             bag = self.bag_list_test[index]
             label = self.labels_list_test[index]
+
+            
 
         return self.transform_and_data_augmentation(bag), label

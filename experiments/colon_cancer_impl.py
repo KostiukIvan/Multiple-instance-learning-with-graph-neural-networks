@@ -22,7 +22,7 @@ from dataloaders.colon_dataset import ColonCancerBagsCross
 from models.colone_cancer import Net
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-ds = ColonCancerBagsCross(path='datasets\\ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
+ds = ColonCancerBagsCross(path='/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/datasets/ColonCancer', train_val_idxs=range(100), test_idxs=[], loc_info=False)
 
 
 def load_train_test_val(ds):

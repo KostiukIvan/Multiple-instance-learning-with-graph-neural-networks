@@ -64,10 +64,10 @@ class ColonCancerBagsCross(data_utils.Dataset):
         labels_list = []
         for dir in dir_list:
             # Get image name
-            img_name = dir.split('\\')[-1]
+            img_name = dir.split('/')[-1]
 
             # bmp to pillow
-            img_dir = dir + '\\' + img_name + '.bmp'
+            img_dir = dir + '/' + img_name + '.bmp'
             img = io.imread(img_dir)
             if img.shape[2] == 4:
                 img = color.rgba2rgb(img)
