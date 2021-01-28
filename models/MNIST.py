@@ -125,11 +125,20 @@ class GraphBased28x28x1(nn.Module):
         return link_loss
 
     # AUXILIARY METHODS
-    def calculate_classification_error(self, output, target):
+    def calculate_classification_error(self, output, target, TP, TN, FP, FN):
         pred = torch.argmax(output)
-        error = 1. - pred.eq(target).cpu().float().mean().data
+        #error = 1. - pred.eq(target).cpu().float().mean().data
+        if pred.eq(1) and target.eq(1):
+            TP[0] += 1
 
-        return error
+        elif pred.eq(1) and target.eq(0):
+            FP[0] += 1
+
+        elif pred.eq(0) and target.eq(1):
+            FN[0] += 1
+
+        elif pred.eq(0) and target.eq(0):
+            TN[0] += 1
 
     def cross_entropy_loss(self, output, target):
         output = output.unsqueeze(0) if output.dim() == 1 else output
@@ -150,7 +159,7 @@ class GraphBased28x28x1(nn.Module):
 
 class GraphBased27x27x3(nn.Module):
     def __init__(self):
-        super(GraphBased32x32x3, self).__init__()
+        super(GraphBased27x27x3, self).__init__()
         self.L = 50
         self.C = 1 # number of clusters
         self.classes = 2 # number of classes
@@ -265,10 +274,20 @@ class GraphBased27x27x3(nn.Module):
         return link_loss
 
     # AUXILIARY METHODS
-    def calculate_classification_error(self, output, target):
+    def calculate_classification_error(self, output, target, TP, TN, FP, FN):
         pred = torch.argmax(output)
-        error = 1. - pred.eq(target).cpu().float().mean().data
-        return error
+        #error = 1. - pred.eq(target).cpu().float().mean().data
+        if pred.eq(1) and target.eq(1):
+            TP[0] += 1
+
+        elif pred.eq(1) and target.eq(0):
+            FP[0] += 1
+
+        elif pred.eq(0) and target.eq(1):
+            FN[0] += 1
+
+        elif pred.eq(0) and target.eq(0):
+            TN[0] += 1
 
     def cross_entropy_loss(self, output, target):
         output = output.unsqueeze(0) if output.dim() == 1 else output
@@ -346,8 +365,8 @@ class GraphBased50x50x3(nn.Module):
         H = H.view(-1, 50 * 3 * 3) # [9, 800]
         H = self.feature_extractor_part2(H)  # NxL  [9, 500]
 
-        X , E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A] 
-        A = pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0]) # torch.ones((len(X), len(X)), device=device) 
+        X = H #, E_idx = self.convert_bag_to_graph_(H, self.n) # nodes [9, 500], E_idx [2, A] 
+        A = torch.ones((len(X), len(X)), device=device) # pyg_ut.to_dense_adj(E_idx.cuda(), max_num_nodes=x.shape[0]) #
         
         # Embedding
         Z = F.leaky_relu(self.gnn_embd(X, A), negative_slope=0.01)
@@ -410,10 +429,20 @@ class GraphBased50x50x3(nn.Module):
         return link_loss
 
     # AUXILIARY METHODS
-    def calculate_classification_error(self, output, target):
+    def calculate_classification_error(self, output, target, TP, TN, FP, FN):
         pred = torch.argmax(output)
-        error = 1. - pred.eq(target).cpu().float().mean().data
-        return error
+        #error = 1. - pred.eq(target).cpu().float().mean().data
+        if pred.eq(1) and target.eq(1):
+            TP[0] += 1
+
+        elif pred.eq(1) and target.eq(0):
+            FP[0] += 1
+
+        elif pred.eq(0) and target.eq(1):
+            FN[0] += 1
+
+        elif pred.eq(0) and target.eq(0):
+            TN[0] += 1
 
     def cross_entropy_loss(self, output, target):
         output = output.unsqueeze(0) if output.dim() == 1 else output

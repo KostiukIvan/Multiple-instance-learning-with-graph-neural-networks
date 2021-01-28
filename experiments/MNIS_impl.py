@@ -47,10 +47,10 @@ def load_CC_train_test(ds):
     N = len(ds)
     train = []
     test = []
-    step = N * 2 // 30
+    step = N * 7 // 10
     [train.append((ds[i][0], ds[i][1][0])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
-    [test.append((ds[i][0], ds[i][1][0])) for i in range(step,  step + step // 2)]
+    [test.append((ds[i][0], ds[i][1][0])) for i in range(step, step + N * 3 // 10)]
     print(f"test loaded {len(test)} items")
     return train, test
 
@@ -58,10 +58,10 @@ def load_BREAST_train_test(ds):
     N = len(ds)
     train = []
     test = []
-    step = N * 2 // 3
+    step = N * 7 // 10
     [train.append((ds[i][0], ds[i][1])) for i in range(0, step)]
     print(f"train loaded {len(train)} items")
-    [test.append((ds[i][0], ds[i][1])) for i in range(step,  step + step // 2)]
+    [test.append((ds[i][0], ds[i][1])) for i in range(step, step + N * 3 // 10)]
     print(f"test loaded {len(test)} items")
     return train, test
 
@@ -70,8 +70,12 @@ def train(model, optimizer, train_loader):
     model.train()
     train_loss = 0.
     batch = 4
-    ERROR = 1.
-    ALL = 1.
+    
+    TP = [0.]
+    TN = [0.]
+    FP = [0.]
+    FN = [0.]
+    ALL = 0.
     for batch_idx, (data, label) in enumerate(train_loader):
         if data.shape[0] == 1 and not MNIST:
             continue
@@ -88,9 +92,9 @@ def train(model, optimizer, train_loader):
             optimizer.zero_grad()
 
         output, l = model(data)
-        loss = model.cross_entropy_loss(output, target) #+ l
+        loss = model.cross_entropy_loss(output, target) + l
 
-        ERROR += model.calculate_classification_error(output, target)
+        model.calculate_classification_error(output, target, TP, TN, FP, FN)
         ALL += 1
         train_loss += loss
 
@@ -99,14 +103,22 @@ def train(model, optimizer, train_loader):
             optimizer.step()
 
     train_loss /= ALL
-    ERROR /= ALL
-    return train_loss, ERROR
+
+    Accuracy = (TP[0] + TN[0]) / ALL
+    Precision = TP[0] / (TP[0] + FP[0]) if (TP[0] + FP[0]) != 0. else TP[0]
+    Recall =  TP[0] / (TP[0] + FN[0]) if (TP[0] + FN[0]) != 0. else TP[0]
+    F1 = 2 * (Recall * Precision) / (Recall + Precision) if (Recall + Precision) != 0 else  2 * (Recall * Precision)
+
+    return train_loss, Accuracy, Precision, Recall, F1
     
 def test(model, test_loader):
     model.eval()
 
-    ERROR = 1.
-    ALL = 1.
+    TP = [0.]
+    TN = [0.]
+    FP = [0.]
+    FN = [0.]
+    ALL = 0.
     for batch_idx, (data, label) in enumerate(test_loader):
         if data.shape[0] == 1 and not MNIST:
             continue
@@ -120,16 +132,20 @@ def test(model, test_loader):
             data, target = data.cuda(), target.cuda()
         
         output, _ = model(data)  
-        ERROR += model.calculate_classification_error(output, target)
+        model.calculate_classification_error(output, target, TP, TN, FP, FN)
         ALL += 1
 
-    ERROR /= ALL
+    Accuracy = (TP[0] + TN[0]) / ALL
+    Precision = TP[0] / (TP[0] + FP[0]) if (TP[0] + FP[0]) != 0. else TP[0]
+    Recall =  TP[0] / (TP[0] + FN[0]) if (TP[0] + FN[0]) != 0. else TP[0]
+    F1 = 2 * (Recall * Precision) / (Recall + Precision) if (Recall + Precision) != 0 else  2 * (Recall * Precision)
 
-    return  ERROR
+    return  Accuracy, Precision, Recall, F1
 
 
 if __name__ == "__main__":
     torch.manual_seed(1)
+    PATH = '/home/ikostiuk/git_repos/Multiple-instance-learning-with-graph-neural-networks/models/saved/'
 
 
     if MNIST:
@@ -151,9 +167,20 @@ if __name__ == "__main__":
 
     
     
-    for epoch in range(0, 5000):
-        train_loss, train_error = train(model, optimizer, train_loader)
-        test_error = test(model, test_loader)
-    
-        print('Epoch: {}, Train Loss: {:.4f}, Train error: {:.4f}, Test error: {:.4f}'.format(epoch, train_loss, train_error, test_error))
+    for epoch in range(0, 100000):
+        train_loss, tr_Accuracy, tr_Precision, tr_Recall, tr_F1 = train(model, optimizer, train_loader)
+        ts_Accuracy, ts_Precision, ts_Recall, ts_F1 = test(model, test_loader)
+        '''
+        if epoch % 100 == 0:
+            # save model
+            torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': train_loss,
+            }, os.path.join(PATH, "MNIST_model_" + str(epoch) + ".pth"))
+        '''
 
+    
+        print('Epoch: {}, Train Loss: {:.4f}, Train A: {:.4f}, P: {:.4f}, R: {:.4f}, F1: {:.4f}, Test A: {:.4f}, P: {:.4f}, R: {:.4f}, F1: {:.4f}'.format(epoch, train_loss, \
+                    tr_Accuracy, tr_Precision, tr_Recall, tr_F1, ts_Accuracy, ts_Precision, ts_Recall, ts_F1))
